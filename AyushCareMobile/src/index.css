@@ -160,6 +160,22 @@ html[data-high-contrast="true"] button:focus-visible,
   animation: spin 1s linear infinite !important;
 }
 
+.mobile-app-loading {
+  min-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 24px;
+  text-align: center;
+  color: #044e42;
+}
+.mobile-app-loading strong { font-size: 1rem; font-weight: 800; }
+.mobile-app-loading > span { max-width: 280px; color: #64748b; font-size: .8rem; line-height: 1.5; }
+.mobile-loading-orbit { width: 58px; height: 58px; display: grid; place-items: center; border: 4px solid #d7f1ed; border-top-color: #008f82; border-radius: 50%; animation: spin 1.1s linear infinite; }
+.mobile-loading-spinner { width: 25px; height: 25px; border: 3px solid #b9e5df; border-top-color: #006b62; border-radius: 50%; animation: spin .75s linear infinite reverse; }
+
 /* Reduced Motion Mode: never disables functional spinners or progress bars */
 html[data-reduce-motion="true"] *:not(.animate-spin):not([class*="animate-spin"]):not([class*="transition-all"]):not([style*="width"]),
 .theme-reduce-motion *:not(.animate-spin):not([class*="animate-spin"]):not([class*="transition-all"]):not([style*="width"]) {
