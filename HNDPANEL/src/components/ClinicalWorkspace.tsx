@@ -296,7 +296,7 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
       recognitionRef.current.stop();
       setIsListening(false);
     }
-  }, [patient.id, patient.chiefComplaint, patient.historyOfPresentIllness, patient.narrativeSummary, patient.socrates]);
+  }, [patient.id]);
 
   // Voice Dictation Toggle Handler
   const toggleVoiceDictation = () => {

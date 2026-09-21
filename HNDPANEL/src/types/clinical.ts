@@ -30,6 +30,8 @@ export interface DocumentFile {
   processingError?: string;
   isLocked?: boolean;
   lockReason?: string;
+  consultationId?: string;
+  visitDate?: string;
 }
 
 export interface ExtractedDrug {
@@ -73,6 +75,24 @@ export interface PatientVitals {
   spo2?: number;
   source?: string;
   recordedAt?: string;
+  weight?: number;
+}
+
+export interface PastVisit {
+  consultationId: string;
+  tokenNumber?: string;
+  status?: string;
+  riskLevel?: string;
+  createdAt?: string;
+  signedOffAt?: string;
+  department?: string;
+  pathway?: string;
+  doctorName?: string;
+  chiefComplaint?: string;
+  diagnosis?: string;
+  historyOfPresentIllness?: string;
+  remarks?: string;
+  prescriptions?: PrescriptionItem[];
 }
 
 export interface DrugAllergy {
@@ -153,4 +173,5 @@ export interface Patient {
   intakeMode?: 'interview' | 'speak' | string;
   patientAudioUrl?: string;
   patientTranscript?: string;
+  pastVisits?: PastVisit[];
 }

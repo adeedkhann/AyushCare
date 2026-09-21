@@ -6,6 +6,12 @@ import {
   ConsultationStatus,
   UploadedDocument,
 } from '../types/api';
+import { PrescriptionItem } from '../types/clinical';
+
+export interface PatientHistoryResponse {
+  visits: any[];
+  documents: UploadedDocument[];
+}
 
 export const doctorService = {
   getQueue: async (): Promise<ConsultationQueueItem[]> => {
@@ -21,6 +27,11 @@ export const doctorService = {
   getPatientReports: async (consultationId: string): Promise<UploadedDocument[]> => {
     const response = await apiClient.get<ApiResponse<UploadedDocument[]>>(`/doctor/patients/${consultationId}/reports`);
     return response.data.data;
+  },
+
+  getPatientHistory: async (patientId: string): Promise<PatientHistoryResponse> => {
+    const response = await apiClient.get<ApiResponse<PatientHistoryResponse>>(`/doctor/patients/${patientId}/history`);
+    return response.data.data || { visits: [], documents: [] };
   },
 
   getConsultationSession: async (consultationId: string): Promise<any> => {
@@ -41,7 +52,14 @@ export const doctorService = {
     await apiClient.patch<ApiResponse<any>>(`/doctor/consultations/${consultationId}/status`, { status });
   },
 
-  signOffConsultation: async (consultationId: string, remarks: string): Promise<void> => {
-    await apiClient.post<ApiResponse<any>>(`/doctor/consultations/${consultationId}/sign-off`, { remarks });
+  signOffConsultation: async (
+    consultationId: string,
+    remarks: string,
+    prescriptions: PrescriptionItem[] = []
+  ): Promise<void> => {
+    await apiClient.post<ApiResponse<any>>(`/doctor/consultations/${consultationId}/sign-off`, {
+      remarks,
+      prescriptions,
+    });
   },
 };

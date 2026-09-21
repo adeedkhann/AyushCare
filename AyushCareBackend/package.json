@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "seed": "node src/database/seedData.js"
   },
   "keywords": [
     "Ministry of Ayush",
@@ -26,6 +27,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "pg": "^8.12.0",
+    "socket.io": "^4.8.3",
     "twilio": "^6.1.0"
   },
   "devDependencies": {

@@ -41,16 +41,16 @@ router.get('/session/:session_id/fhir/preview', fhirPreview);
 router.post('/session/:session_id/patient-upload-qr', createPatientUploadQr);
 
 // Backward-compatible endpoint used by the first kiosk prototype.
-router.post('/dialogue/next', async (req,res,next) => {
+router.post('/dialogue/next', async (req, res, next) => {
     try {
         const { consultationId, answerText, questionId = 'current' } = req.body;
-        if (!consultationId) return res.status(400).json({success:false,message:'consultationId is required'});
+        if (!consultationId) return res.status(400).json({ success: false, message: 'consultationId is required' });
         req.params.session_id = consultationId;
         if (answerText !== undefined) {
             req.body = { question_id: questionId, answer: answerText, input_mode: 'text', confidence: 1 };
-            return answerDialogue(req,res,next);
+            return answerDialogue(req, res, next);
         }
-        return getDialogueState(req,res,next);
-    } catch(e) { next(e); }
+        return getDialogueState(req, res, next);
+    } catch (e) { next(e); }
 });
 export default router;

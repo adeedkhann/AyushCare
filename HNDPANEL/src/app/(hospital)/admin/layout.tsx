@@ -84,7 +84,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Reordered Navigation Tabs (Doctor Roster is 1st & default landing tab)
   const navItems = [
     { label: 'Doctor Roster & Rooms', href: '/admin/doctors', icon: Users, short: 'Doctors' },
-    { label: 'Department Analytics', href: '/admin/departments', icon: Building2, short: 'Depts' },
+    { label: 'Department Analytics', href: '/admin/analytics', icon: Building2, short: 'Depts' },
     { label: 'Past Records & History', href: '/admin/history', icon: History, short: 'History' },
     { label: 'Live Token Desk & Queue', href: '/admin/queue', icon: Layers, short: 'Queue' },
   ];

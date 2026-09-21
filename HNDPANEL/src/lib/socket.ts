@@ -4,7 +4,7 @@ const rawSocketUrl =
   process.env.NEXT_PUBLIC_SOCKET_URL ||
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, '') ||
   process.env.VITE_SOCKET_URL ||
-  'http://localhost:8001';
+  'http://localhost:8000';
 
 const SOCKET_URL = rawSocketUrl.replace(/\/+$/, '');
 
@@ -70,7 +70,7 @@ export const subscribeToQueueEvents = (
   onRedFlag?: (data?: any) => void
 ) => {
   const s = getSocket();
-  if (!s || typeof s.on !== 'function') return () => {};
+  if (!s || typeof s.on !== 'function') return () => { };
 
   if (onQueueUpdated) s.on('queue:updated', onQueueUpdated);
   if (onTokenCalled) s.on('token:called', onTokenCalled);
@@ -83,6 +83,14 @@ export const subscribeToQueueEvents = (
     if (onPatientReady) s.off('patient:ready', onPatientReady);
     if (onRedFlag) s.off('triage:red-flag', onRedFlag);
   };
+};
+
+export const subscribeToSosAlerts = (onSosAlert: (data: any) => void) => {
+  const s = getSocket();
+  if (!s || typeof s.on !== 'function') return () => {};
+
+  s.on('sos:alert', onSosAlert);
+  return () => s.off('sos:alert', onSosAlert);
 };
 
 export const disconnectSocket = () => {

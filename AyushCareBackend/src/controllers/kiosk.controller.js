@@ -6,6 +6,7 @@ import { ApiResponse } from '../utilities/ApiResponse.js';
 import { asyncHandler } from '../utilities/asyncHandler.js';
 import { ApiError } from '../utilities/ApiError.js';
 import pool from '../database/dbConnection.js';
+import { emitEvent } from '../services/socketService.js';
 import AiServiceGateway from '../services/aiService.js';
 import { assertSupportedLanguage } from '../services/languageService.js';
 import { createRawQrToken, hashQrToken } from '../services/patientQrService.js';
@@ -291,7 +292,7 @@ export const sendSosOtp = asyncHandler(async (req, res) => {
 export const verifySosOtp = asyncHandler(async (req, res) => {
     const {
         otp, patientId, abhaNumber, mobileNumber, fullName, gender, age, dob, address,
-        aadhaarNumber, kioskId = 'KIOSK-MAIN-01'
+        aadhaarNumber, reason, kioskId = 'KIOSK-MAIN-01'
     } = req.body || {};
     const mobile = normalizeSosMobile(mobileNumber);
     if (!mobile || !otp) throw new ApiError(400, 'Mobile number and OTP are required');
@@ -332,11 +333,28 @@ export const verifySosOtp = asyncHandler(async (req, res) => {
         }
 
         const event = await client.query(
-            `INSERT INTO sos_events (patient_id,kiosk_id,verification_method,metadata) VALUES ($1,$2,$3,$4) RETURNING id,invoked_at`,
-            [patient.id, kioskId, abhaNumber ? 'abha' : 'mobile', JSON.stringify({ source: 'kiosk_sos' })]
+            `INSERT INTO sos_events (patient_id,kiosk_id,verification_method,metadata,reason,status) VALUES ($1,$2,$3,$4,$5,'active') RETURNING id,invoked_at`,
+            [patient.id, kioskId, abhaNumber ? 'abha' : 'mobile', JSON.stringify({ source: 'kiosk_sos' }), reason || null]
         );
+        const token = `SOS-${String(Date.now()).slice(-6)}`;
+        const consultation = await client.query(
+            `INSERT INTO consultations (patient_id,token_number,status,risk_level,intake_pathway,language,prescriptions)
+             VALUES ($1,$2,'in_queue','emergency','general','en','[]'::jsonb) RETURNING id,token_number,status,risk_level`,
+            [patient.id, token]
+        );
+        await client.query('UPDATE sos_events SET consultation_id=$1 WHERE id=$2', [consultation.rows[0].id, event.rows[0].id]);
         await client.query('COMMIT');
-        return res.status(201).json(new ApiResponse(201, { patient, sos_event: event.rows[0] }, 'SOS request verified and recorded'));
+        emitEvent('sos:alert', {
+            patient,
+            token: consultation.rows[0].token_number,
+            consultationId: consultation.rows[0].id,
+            riskLevel: consultation.rows[0].risk_level,
+        });
+        return res.status(201).json(new ApiResponse(201, {
+            patient,
+            sos_event: { ...event.rows[0], consultation_id: consultation.rows[0].id },
+            consultation: consultation.rows[0],
+        }, 'SOS request verified and recorded'));
     } catch (error) {
         await client.query('ROLLBACK');
         throw error;
@@ -375,7 +393,7 @@ export const createKioskSession = asyncHandler(async (req, res) => {
     await getConsultation(consultationId);
     const token = randomBytes(12).toString('hex').toUpperCase();
     const expiresAt = new Date(Date.now() + Number(process.env.KIOSK_SESSION_TTL_MINUTES || 30) * 60 * 1000);
-    const result = await pool.query(`INSERT INTO kiosk_sessions (pairing_token,kiosk_id,consultation_id,expires_at) VALUES ($1,$2,$3,$4) RETURNING *`, [token,kioskId,consultationId,expiresAt]);
+    const result = await pool.query(`INSERT INTO kiosk_sessions (pairing_token,kiosk_id,consultation_id,expires_at) VALUES ($1,$2,$3,$4) RETURNING *`, [token, kioskId, consultationId, expiresAt]);
     return res.status(201).json(new ApiResponse(201, result.rows[0], 'Kiosk pairing session created'));
 });
 
@@ -410,23 +428,23 @@ export const createPatientUploadQr = asyncHandler(async (req, res) => {
     }, 'Patient document-upload QR generated'));
 });
 
-export const getSession = asyncHandler(async (req,res) => {
+export const getSession = asyncHandler(async (req, res) => {
     const consultation = await getConsultation(req.params.session_id || req.params.consultation_id);
-    const [docs,vitals,summary] = await Promise.all([
-        pool.query('SELECT * FROM uploaded_documents WHERE consultation_id=$1 ORDER BY created_at DESC',[consultation.id]),
-        pool.query('SELECT * FROM vitals WHERE consultation_id=$1',[consultation.id]),
-        pool.query('SELECT * FROM clinical_summaries WHERE consultation_id=$1',[consultation.id])
+    const [docs, vitals, summary] = await Promise.all([
+        pool.query('SELECT * FROM uploaded_documents WHERE consultation_id=$1 ORDER BY created_at DESC', [consultation.id]),
+        pool.query('SELECT * FROM vitals WHERE consultation_id=$1', [consultation.id]),
+        pool.query('SELECT * FROM clinical_summaries WHERE consultation_id=$1', [consultation.id])
     ]);
-    return res.json(new ApiResponse(200,{consultation,documents:docs.rows,vitals:vitals.rows[0]||null,summary:summary.rows[0]||null},'Session state loaded'));
+    return res.json(new ApiResponse(200, { consultation, documents: docs.rows, vitals: vitals.rows[0] || null, summary: summary.rows[0] || null }, 'Session state loaded'));
 });
 
-export const updateSessionLanguage = asyncHandler(async(req,res)=>{
-    const { language }=req.body;
+export const updateSessionLanguage = asyncHandler(async (req, res) => {
+    const { language } = req.body;
     const selectedLanguage = await assertSupportedLanguage(language);
-    const consultation=await getConsultation(req.params.session_id);
-    const ai=await AiServiceGateway.updateLanguage(consultation.ai_session_id,selectedLanguage.code);
-    const result=await pool.query('UPDATE consultations SET language=$1,updated_at=NOW() WHERE id=$2 RETURNING *',[selectedLanguage.code,consultation.id]);
-    return res.json(new ApiResponse(200,{consultation:result.rows[0],ai,language:selectedLanguage},'Language updated'));
+    const consultation = await getConsultation(req.params.session_id);
+    const ai = await AiServiceGateway.updateLanguage(consultation.ai_session_id, selectedLanguage.code);
+    const result = await pool.query('UPDATE consultations SET language=$1,updated_at=NOW() WHERE id=$2 RETURNING *', [selectedLanguage.code, consultation.id]);
+    return res.json(new ApiResponse(200, { consultation: result.rows[0], ai, language: selectedLanguage }, 'Language updated'));
 });
 
 export const updateConsultationRouting = asyncHandler(async (req, res) => {
@@ -485,50 +503,50 @@ export const updateConsultationRouting = asyncHandler(async (req, res) => {
     }, 'Department and doctor routing saved'));
 });
 
-export const startDialogue = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    const result=await AiServiceGateway.startConversation(c.ai_session_id,c.intake_pathway);
-    return res.json(new ApiResponse(200,result,'AI conversation started'));
+export const startDialogue = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    const result = await AiServiceGateway.startConversation(c.ai_session_id, c.intake_pathway);
+    return res.json(new ApiResponse(200, result, 'AI conversation started'));
 });
 
-export const getDialogueState = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    return res.json(new ApiResponse(200,await AiServiceGateway.getConversationState(c.ai_session_id),'AI conversation state loaded'));
+export const getDialogueState = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    return res.json(new ApiResponse(200, await AiServiceGateway.getConversationState(c.ai_session_id), 'AI conversation state loaded'));
 });
 
-export const answerDialogue = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    const {question_id,answer,input_mode='text',confidence=1}=req.body;
-    if(!question_id || answer === undefined) throw new ApiError(400,'question_id and answer are required');
-    const result=await AiServiceGateway.submitConversationAnswer(c.ai_session_id,question_id,String(answer),input_mode,confidence);
-    const flags=result.red_flags || [];
-    if(flags.length) await pool.query(`UPDATE consultations SET risk_level='high_risk',updated_at=NOW() WHERE id=$1`,[c.id]);
-    await pool.query(`UPDATE consultations SET updated_at=NOW() WHERE id=$1`,[c.id]);
-    return res.json(new ApiResponse(200,result,'Answer recorded'));
+export const answerDialogue = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    const { question_id, answer, input_mode = 'text', confidence = 1 } = req.body;
+    if (!question_id || answer === undefined) throw new ApiError(400, 'question_id and answer are required');
+    const result = await AiServiceGateway.submitConversationAnswer(c.ai_session_id, question_id, String(answer), input_mode, confidence);
+    const flags = result.red_flags || [];
+    if (flags.length) await pool.query(`UPDATE consultations SET risk_level='high_risk',updated_at=NOW() WHERE id=$1`, [c.id]);
+    await pool.query(`UPDATE consultations SET updated_at=NOW() WHERE id=$1`, [c.id]);
+    return res.json(new ApiResponse(200, result, 'Answer recorded'));
 });
 
-export const speechDialogue = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    const {question_id,language=c.language||'en'}=req.query;
-    if(!question_id || !req.body?.length) throw new ApiError(400,'Audio body and question_id are required');
-    const result=await AiServiceGateway.submitSpeech(c.ai_session_id,question_id,language,req.body,req.headers['content-type']||'audio/wav');
-    if((result.red_flags||[]).length) await pool.query(`UPDATE consultations SET risk_level='high_risk',updated_at=NOW() WHERE id=$1`,[c.id]);
-    return res.json(new ApiResponse(200,result,'Speech answer processed'));
+export const speechDialogue = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    const { question_id, language = c.language || 'en' } = req.query;
+    if (!question_id || !req.body?.length) throw new ApiError(400, 'Audio body and question_id are required');
+    const result = await AiServiceGateway.submitSpeech(c.ai_session_id, question_id, language, req.body, req.headers['content-type'] || 'audio/wav');
+    if ((result.red_flags || []).length) await pool.query(`UPDATE consultations SET risk_level='high_risk',updated_at=NOW() WHERE id=$1`, [c.id]);
+    return res.json(new ApiResponse(200, result, 'Speech answer processed'));
 });
 
-export const ttsDialogue = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
+export const ttsDialogue = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
     const text = req.body?.text || req.query.text;
     const language = req.body?.language || req.query.language || c.language || 'en';
-    if(!text) throw new ApiError(400,'text is required');
-    const result=await AiServiceGateway.tts(c.ai_session_id,text,language);
-    return res.json(new ApiResponse(200,result,'TTS generated'));
+    if (!text) throw new ApiError(400, 'text is required');
+    const result = await AiServiceGateway.tts(c.ai_session_id, text, language);
+    return res.json(new ApiResponse(200, result, 'TTS generated'));
 });
 
-export const saveVitals = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    let {systolic,diastolic,pulse,temperature,spo2,source='manual',bp,temp}=req.body || {};
-    
+export const saveVitals = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    let { systolic, diastolic, pulse, temperature, spo2, source = 'manual', bp, temp } = req.body || {};
+
     // Parse blood pressure string "120/80" if passed as bp
     if (bp && (!systolic || !diastolic)) {
         const parts = String(bp).split('/');
@@ -563,28 +581,28 @@ export const saveVitals = asyncHandler(async(req,res)=>{
         );
         row = insertRes.rows[0];
     }
-    await pool.query('UPDATE consultations SET updated_at=NOW() WHERE id=$1',[c.id]);
-    return res.status(201).json(new ApiResponse(201,row,'Vitals saved'));
+    await pool.query('UPDATE consultations SET updated_at=NOW() WHERE id=$1', [c.id]);
+    return res.status(201).json(new ApiResponse(201, row, 'Vitals saved'));
 });
 
-export const listDepartments = asyncHandler(async(req,res)=>{
-    const hospitalId=req.query.hospital_id || DEFAULT_HOSPITAL();
-    if(!hospitalId) throw new ApiError(400,'hospital_id is required');
-    const params=[hospitalId]; let sql='SELECT id,name,pathway,is_active FROM departments WHERE hospital_id=$1 AND is_active=TRUE';
-    if(req.query.pathway){sql+=' AND pathway=$2';params.push(pathway(req.query.pathway));}
-    sql+=' ORDER BY name';
-    const result=await pool.query(sql,params); return res.json(new ApiResponse(200,result.rows,'Departments loaded'));
+export const listDepartments = asyncHandler(async (req, res) => {
+    const hospitalId = req.query.hospital_id || DEFAULT_HOSPITAL();
+    if (!hospitalId) throw new ApiError(400, 'hospital_id is required');
+    const params = [hospitalId]; let sql = 'SELECT id,name,pathway,is_active FROM departments WHERE hospital_id=$1 AND is_active=TRUE';
+    if (req.query.pathway) { sql += ' AND pathway=$2'; params.push(pathway(req.query.pathway)); }
+    sql += ' ORDER BY name';
+    const result = await pool.query(sql, params); return res.json(new ApiResponse(200, result.rows, 'Departments loaded'));
 });
 
-export const listDepartmentDoctors = asyncHandler(async(req,res)=>{
-    const result=await pool.query(`SELECT u.id,u.name,u.email,u.specialization,u.is_active,d.pathway,d.hospital_id FROM users u JOIN doctor_departments dd ON dd.doctor_id=u.id JOIN departments d ON d.id=dd.department_id WHERE d.id=$1 AND u.role='doctor' AND u.is_active=TRUE AND d.is_active=TRUE AND u.hospital_id=d.hospital_id ORDER BY u.name`,[req.params.department_id]);
-    return res.json(new ApiResponse(200,result.rows,'Doctors loaded'));
+export const listDepartmentDoctors = asyncHandler(async (req, res) => {
+    const result = await pool.query(`SELECT u.id,u.name,u.email,u.specialization,u.is_active,d.pathway,d.hospital_id FROM users u JOIN doctor_departments dd ON dd.doctor_id=u.id JOIN departments d ON d.id=dd.department_id WHERE d.id=$1 AND u.role='doctor' AND u.is_active=TRUE AND d.is_active=TRUE AND u.hospital_id=d.hospital_id ORDER BY u.name`, [req.params.department_id]);
+    return res.json(new ApiResponse(200, result.rows, 'Doctors loaded'));
 });
 
-export const generateSummary = asyncHandler(async(req,res)=>{
-    const c=await getConsultation(req.params.session_id);
-    let {language=c.language||'en',include_documents=true,include_ayush=c.intake_pathway==='ayurveda',conversation_history}=req.body||{};
-    
+export const generateSummary = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id);
+    let { language = c.language || 'en', include_documents = true, include_ayush = c.intake_pathway === 'ayurveda', conversation_history } = req.body || {};
+
     // Normalize language if passed as an object
     if (language && typeof language === 'object') {
         include_documents = language.include_documents !== false;
@@ -606,11 +624,11 @@ export const generateSummary = asyncHandler(async(req,res)=>{
         ];
     }
 
-    const result=await AiServiceGateway.generateSummary(c.ai_session_id,cleanLanguage,include_documents,include_ayush,conversation_history);
-    
-    const chiefComplaint = result?.sections?.find(s=>/complaint/i.test(s.heading_en||''))?.body||null;
-    const historyIllness = result?.sections?.find(s=>/history/i.test(s.heading_en||''))?.body||null;
-    const ayushAttrs = JSON.stringify(c.intake_pathway==='ayurveda'?{pathway:'ayurveda'}:{});
+    const result = await AiServiceGateway.generateSummary(c.ai_session_id, cleanLanguage, include_documents, include_ayush, conversation_history);
+
+    const chiefComplaint = result?.sections?.find(s => /complaint/i.test(s.heading_en || ''))?.body || null;
+    const historyIllness = result?.sections?.find(s => /history/i.test(s.heading_en || ''))?.body || null;
+    const ayushAttrs = JSON.stringify(c.intake_pathway === 'ayurveda' ? { pathway: 'ayurveda' } : {});
     const aiPayload = JSON.stringify(result);
 
     const existing = await pool.query('SELECT id FROM clinical_summaries WHERE consultation_id = $1 LIMIT 1', [c.id]);
@@ -628,42 +646,45 @@ export const generateSummary = asyncHandler(async(req,res)=>{
             [c.id, chiefComplaint, historyIllness, ayushAttrs, aiPayload]
         );
     }
-    return res.json(new ApiResponse(200,result,'AI summary generated'));
+    return res.json(new ApiResponse(200, result, 'AI summary generated'));
 });
 
-export const getSummary = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); const ai=await AiServiceGateway.getSummary(c.ai_session_id); const local=await pool.query('SELECT * FROM clinical_summaries WHERE consultation_id=$1',[c.id]); return res.json(new ApiResponse(200,{ai_summary:ai,stored_summary:local.rows[0]||null},'Summary loaded'));});
+export const getSummary = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); const ai = await AiServiceGateway.getSummary(c.ai_session_id); const local = await pool.query('SELECT * FROM clinical_summaries WHERE consultation_id=$1', [c.id]); return res.json(new ApiResponse(200, { ai_summary: ai, stored_summary: local.rows[0] || null }, 'Summary loaded')); });
 
-export const grantConsent = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); const scopes=req.body||{}; const scopeMap={clinical_intake:'Clinical Intake',document_processing:'Document Processing',his_abdm_sharing:'ABDM/HIS Sharing'}; if(c.ai_session_id) await AiServiceGateway.grantConsent(c.ai_session_id,scopes); const client=await pool.connect(); try{await client.query('BEGIN'); for(const [scopeId,title] of Object.entries(scopeMap)){if(scopes[scopeId]===true){await client.query(`INSERT INTO consent_records(consultation_id,scope_id,title,purpose,required,status) VALUES($1,$2,$3,$4,$5,'granted')`,[c.id,scopeId,title,`AyushCare ${title.toLowerCase()}`,scopeId==='clinical_intake']);}} await client.query('UPDATE patients SET consent_granted=TRUE,consent_timestamp=NOW() WHERE id=(SELECT patient_id FROM consultations WHERE id=$1)',[c.id]); await audit(client,c.id,'consent_granted',scopes); await client.query('COMMIT'); }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();} const scopesResult=await pool.query('SELECT * FROM consent_records WHERE consultation_id=$1 ORDER BY granted_at DESC',[c.id]); return res.json(new ApiResponse(200,scopesResult.rows,'Consent recorded'));});
+export const grantConsent = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); const scopes = req.body || {}; const scopeMap = { clinical_intake: 'Clinical Intake', document_processing: 'Document Processing', his_abdm_sharing: 'ABDM/HIS Sharing' }; if (c.ai_session_id) await AiServiceGateway.grantConsent(c.ai_session_id, scopes); const client = await pool.connect(); try { await client.query('BEGIN'); for (const [scopeId, title] of Object.entries(scopeMap)) { if (scopes[scopeId] === true) { await client.query(`INSERT INTO consent_records(consultation_id,scope_id,title,purpose,required,status) VALUES($1,$2,$3,$4,$5,'granted')`, [c.id, scopeId, title, `AyushCare ${title.toLowerCase()}`, scopeId === 'clinical_intake']); } } await client.query('UPDATE patients SET consent_granted=TRUE,consent_timestamp=NOW() WHERE id=(SELECT patient_id FROM consultations WHERE id=$1)', [c.id]); await audit(client, c.id, 'consent_granted', scopes); await client.query('COMMIT'); } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); } const scopesResult = await pool.query('SELECT * FROM consent_records WHERE consultation_id=$1 ORDER BY granted_at DESC', [c.id]); return res.json(new ApiResponse(200, scopesResult.rows, 'Consent recorded')); });
 
-export const getConsent = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); const scopes=await pool.query('SELECT * FROM consent_records WHERE consultation_id=$1 ORDER BY granted_at',[c.id]); return res.json(new ApiResponse(200,scopes.rows,'Consent loaded'));});
+export const getConsent = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); const scopes = await pool.query('SELECT * FROM consent_records WHERE consultation_id=$1 ORDER BY granted_at', [c.id]); return res.json(new ApiResponse(200, scopes.rows, 'Consent loaded')); });
 
-export const generateToken = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); const patientResult=await pool.query('SELECT id,abha_number,full_name,gender,date_of_birth,mobile_number,address FROM patients WHERE id=$1',[c.patient_id]); const patient=patientResult.rows[0]||null; if(c.token_number) return res.json(new ApiResponse(200,{token_number:c.token_number,status:c.status,consultation_id:c.id,patient},'Token already assigned'));
-    const client=await pool.connect(); try{
+export const generateToken = asyncHandler(async (req, res) => {
+    const c = await getConsultation(req.params.session_id); const patientResult = await pool.query('SELECT id,abha_number,full_name,gender,date_of_birth,mobile_number,address FROM patients WHERE id=$1', [c.patient_id]); const patient = patientResult.rows[0] || null; if (c.token_number) return res.json(new ApiResponse(200, { token_number: c.token_number, status: c.status, consultation_id: c.id, patient }, 'Token already assigned'));
+    const client = await pool.connect(); try {
         await client.query('BEGIN');
-        const lock=await client.query('SELECT * FROM consultations WHERE id=$1 FOR UPDATE',[c.id]); const current=lock.rows[0]; if(current.token_number){await client.query('COMMIT');return res.json(new ApiResponse(200,{token_number:current.token_number,status:current.status},'Token already assigned'));} const prefix=c.intake_pathway==='ayurveda'?'AY':'AL';
-    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`token:${c.hospital_id}:${c.intake_pathway}:${new Date().toISOString().slice(0,10)}`]);
-    const count=await client.query(`SELECT COUNT(*)::int AS n FROM consultations WHERE hospital_id=$1 AND intake_pathway=$2 AND DATE(created_at)=CURRENT_DATE`,[c.hospital_id,c.intake_pathway]); const token=`${prefix}-${String(count.rows[0].n+1).padStart(3,'0')}`; const updated=await client.query(`UPDATE consultations SET token_number=$1,status='in_queue',updated_at=NOW() WHERE id=$2 RETURNING *`,[token,c.id]); await audit(client,c.id,'token_generated',{token_number:token}); await client.query('COMMIT'); return res.status(201).json(new ApiResponse(201,{token_number:token,status:updated.rows[0].status,consultation_id:c.id,intake_pathway:c.intake_pathway,patient},'Queue token generated'));}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}});
+        const lock = await client.query('SELECT * FROM consultations WHERE id=$1 FOR UPDATE', [c.id]); const current = lock.rows[0]; if (current.token_number) { await client.query('COMMIT'); return res.json(new ApiResponse(200, { token_number: current.token_number, status: current.status }, 'Token already assigned')); } const prefix = c.intake_pathway === 'ayurveda' ? 'AY' : 'AL';
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`token:${c.hospital_id}:${c.intake_pathway}:${new Date().toISOString().slice(0, 10)}`]);
+        const count = await client.query(`SELECT COUNT(*)::int AS n FROM consultations WHERE hospital_id=$1 AND intake_pathway=$2 AND DATE(created_at)=CURRENT_DATE`, [c.hospital_id, c.intake_pathway]); const token = `${prefix}-${String(count.rows[0].n + 1).padStart(3, '0')}`; const updated = await client.query(`UPDATE consultations SET token_number=$1,status='in_queue',updated_at=NOW() WHERE id=$2 RETURNING *`, [token, c.id]); await audit(client, c.id, 'token_generated', { token_number: token }); await client.query('COMMIT'); return res.status(201).json(new ApiResponse(201, { token_number: token, status: updated.rows[0].status, consultation_id: c.id, intake_pathway: c.intake_pathway, patient }, 'Queue token generated'));
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+});
 
-export const completeSession = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); await pool.query(`UPDATE consultations SET status='in_queue',updated_at=NOW() WHERE id=$1`,[c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1',[c.id]); return res.json(new ApiResponse(200,{consultation_id:c.id,status:'in_queue',token_number:c.token_number},'Kiosk intake completed'))});
+export const completeSession = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); await pool.query(`UPDATE consultations SET status='in_queue',updated_at=NOW() WHERE id=$1`, [c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1', [c.id]); return res.json(new ApiResponse(200, { consultation_id: c.id, status: 'in_queue', token_number: c.token_number }, 'Kiosk intake completed')) });
 
-export const cancelSession = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); await pool.query(`UPDATE consultations SET status='cancelled',updated_at=NOW() WHERE id=$1`,[c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1',[c.id]); return res.json(new ApiResponse(200,{consultation_id:c.id,status:'cancelled'},'Kiosk session cancelled'))});
+export const cancelSession = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); await pool.query(`UPDATE consultations SET status='cancelled',updated_at=NOW() WHERE id=$1`, [c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1', [c.id]); return res.json(new ApiResponse(200, { consultation_id: c.id, status: 'cancelled' }, 'Kiosk session cancelled')) });
 
 
-export const deleteAiSession = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); if(c.ai_session_id) await AiServiceGateway.deleteSession(c.ai_session_id); await pool.query(`UPDATE consultations SET status='cancelled',updated_at=NOW() WHERE id=$1`,[c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1',[c.id]); return res.json(new ApiResponse(200,{},'AI session deleted and consultation cancelled')); });
-export const listAiDocuments = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); return res.json(new ApiResponse(200,await AiServiceGateway.listDocuments(c.ai_session_id),'AI documents loaded')); });
-export const verifyAiDocumentEntity = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); return res.json(new ApiResponse(200,await AiServiceGateway.verifyDocumentEntity(c.ai_session_id,req.params.document_id,req.params.entity_id,req.query.status||'verified'),'Document entity verification updated')); });
-export const editSummarySection = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); const {edited_body,edit_reason}=req.body; if(!edited_body||!edit_reason) throw new ApiError(400,'edited_body and edit_reason are required'); return res.json(new ApiResponse(200,await AiServiceGateway.editSummarySection(c.ai_session_id,req.params.section_id,edited_body,edit_reason),'Summary section updated')); });
-export const getConsentReceipt = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); return res.json(new ApiResponse(200,await AiServiceGateway.getConsentReceipt(c.ai_session_id),'Consent receipt loaded')); });
-export const withdrawConsent = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); const {scope_id}=req.body; if(!scope_id) throw new ApiError(400,'scope_id is required'); return res.json(new ApiResponse(200,await AiServiceGateway.withdrawConsent(c.ai_session_id,scope_id),'Consent withdrawn')); });
-export const getConsentScopes = asyncHandler(async(req,res)=>{ const c=await getConsultation(req.params.session_id); return res.json(new ApiResponse(200,await AiServiceGateway.getConsentScopes(c.ai_session_id),'Consent scopes loaded')); });
+export const deleteAiSession = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); if (c.ai_session_id) await AiServiceGateway.deleteSession(c.ai_session_id); await pool.query(`UPDATE consultations SET status='cancelled',updated_at=NOW() WHERE id=$1`, [c.id]); await pool.query('UPDATE kiosk_sessions SET is_active=FALSE WHERE consultation_id=$1', [c.id]); return res.json(new ApiResponse(200, {}, 'AI session deleted and consultation cancelled')); });
+export const listAiDocuments = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); return res.json(new ApiResponse(200, await AiServiceGateway.listDocuments(c.ai_session_id), 'AI documents loaded')); });
+export const verifyAiDocumentEntity = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); return res.json(new ApiResponse(200, await AiServiceGateway.verifyDocumentEntity(c.ai_session_id, req.params.document_id, req.params.entity_id, req.query.status || 'verified'), 'Document entity verification updated')); });
+export const editSummarySection = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); const { edited_body, edit_reason } = req.body; if (!edited_body || !edit_reason) throw new ApiError(400, 'edited_body and edit_reason are required'); return res.json(new ApiResponse(200, await AiServiceGateway.editSummarySection(c.ai_session_id, req.params.section_id, edited_body, edit_reason), 'Summary section updated')); });
+export const getConsentReceipt = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); return res.json(new ApiResponse(200, await AiServiceGateway.getConsentReceipt(c.ai_session_id), 'Consent receipt loaded')); });
+export const withdrawConsent = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); const { scope_id } = req.body; if (!scope_id) throw new ApiError(400, 'scope_id is required'); return res.json(new ApiResponse(200, await AiServiceGateway.withdrawConsent(c.ai_session_id, scope_id), 'Consent withdrawn')); });
+export const getConsentScopes = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); return res.json(new ApiResponse(200, await AiServiceGateway.getConsentScopes(c.ai_session_id), 'Consent scopes loaded')); });
 
-export const fhirPreview = asyncHandler(async(req,res)=>{const c=await getConsultation(req.params.session_id); return res.json(new ApiResponse(200,await AiServiceGateway.fhirPreview(c.ai_session_id),'FHIR preview loaded'));});
+export const fhirPreview = asyncHandler(async (req, res) => { const c = await getConsultation(req.params.session_id); return res.json(new ApiResponse(200, await AiServiceGateway.fhirPreview(c.ai_session_id), 'FHIR preview loaded')); });
 
 export const audioIntake = asyncHandler(async (req, res) => {
     const c = await getConsultation(req.params.session_id);
     const requestedLang = req.query.language || 'auto';
     const mimeType = req.headers['content-type'] || 'audio/webm';
-    
+
     if (!req.body || !req.body.length) {
         throw new ApiError(400, 'Audio file is required');
     }

@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { doctorService } from '../../../services/doctor.service';
+import { doctorService, PatientHistoryResponse } from '../../../services/doctor.service';
 import { ConsultationQueueItem, ClinicalSummary, UploadedDocument } from '../../../types/api';
 import { Patient, PrescriptionItem } from '../../../types/clinical';
 import { mapQueueItemToPatient } from '../../../lib/adapters';
-import { subscribeToQueueEvents } from '../../../lib/socket';
+import { subscribeToQueueEvents, subscribeToSosAlerts } from '../../../lib/socket';
 import { TopNavbar } from '../../../components/TopNavbar';
 import { QueueSidebar } from '../../../components/QueueSidebar';
 import { ClinicalWorkspace } from '../../../components/ClinicalWorkspace';
@@ -134,8 +134,10 @@ export default function DoctorWorkspacePage() {
   const [activeSummary, setActiveSummary] = useState<ClinicalSummary | null>(null);
   const [activeReports, setActiveReports] = useState<UploadedDocument[]>([]);
   const [activeSessionDocs, setActiveSessionDocs] = useState<any[]>([]);
+  const [activePatientHistory, setActivePatientHistory] = useState<PatientHistoryResponse | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [liveConsentNotification, setLiveConsentNotification] = useState<string | null>(null);
+  const [sosAlert, setSosAlert] = useState<any | null>(null);
 
   // Responsive Drawer States
   const [isEvidenceDrawerOpen, setIsEvidenceDrawerOpen] = useState(true);
@@ -201,9 +203,28 @@ export default function DoctorWorkspacePage() {
       () => fetchQueue(false),
       () => fetchQueue(false)
     );
+    const unsubscribeSos = subscribeToSosAlerts((alert) => {
+      setSosAlert(alert);
+      fetchQueue(false);
+      if (typeof window !== 'undefined') {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const context = new AudioContextClass();
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          oscillator.frequency.value = 880;
+          gain.gain.value = 0.08;
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start();
+          oscillator.stop(context.currentTime + 0.35);
+        }
+      }
+    });
 
     return () => {
       unsubscribe();
+      unsubscribeSos();
     };
   }, [fetchQueue]);
 
@@ -215,6 +236,7 @@ export default function DoctorWorkspacePage() {
       setActiveSummary(null);
       setActiveReports([]);
       setActiveSessionDocs([]);
+      setActivePatientHistory(null);
       // 2. Activate skeleton loader synchronously
       setLoadingDetails(true);
       // 3. Switch active ID
@@ -238,16 +260,20 @@ export default function DoctorWorkspacePage() {
 
     const loadDetails = async () => {
       try {
-        const [summary, reports, session] = await Promise.all([
+        const [summary, reports, session, history] = await Promise.all([
           doctorService.getPatientSummary(selectedConsultationId).catch(() => null),
           doctorService.getPatientReports(selectedConsultationId).catch(() => []),
           doctorService.getConsultationSession(selectedConsultationId).catch(() => null),
+          doctorService.getPatientHistory(
+            rawQueue.find((item) => item.id === selectedConsultationId)?.patient_id || selectedConsultationId
+          ).catch(() => ({ visits: [], documents: [] })),
         ]);
 
         if (isEffectActive && isMountedRef.current) {
           setActiveSummary(summary);
           setActiveReports(Array.isArray(reports) ? reports : []);
           setActiveSessionDocs(session?.documents || []);
+          setActivePatientHistory(history);
         }
       } catch {
         if (isEffectActive && isMountedRef.current) {
@@ -269,10 +295,13 @@ export default function DoctorWorkspacePage() {
       if (!isEffectActive || !isMountedRef.current || document.hidden) return;
 
       try {
-        const [summary, reports, session] = await Promise.all([
+        const [summary, reports, session, history] = await Promise.all([
           doctorService.getPatientSummary(selectedConsultationId).catch(() => null),
           doctorService.getPatientReports(selectedConsultationId).catch(() => []),
           doctorService.getConsultationSession(selectedConsultationId).catch(() => null),
+          doctorService.getPatientHistory(
+            rawQueue.find((item) => item.id === selectedConsultationId)?.patient_id || selectedConsultationId
+          ).catch(() => ({ visits: [], documents: [] })),
         ]);
 
         if (!isEffectActive || !isMountedRef.current) return;
@@ -308,6 +337,7 @@ export default function DoctorWorkspacePage() {
         if (sessionDocs.length > 0) {
           setActiveSessionDocs(sessionDocs);
         }
+        setActivePatientHistory(history);
       } catch {
         // Silent sync catch
       }
@@ -327,8 +357,8 @@ export default function DoctorWorkspacePage() {
     const activeMapped: Patient[] = rawQueue.map((item) => {
       const p =
         item.id === selectedConsultationId
-          ? mapQueueItemToPatient(item, activeSummary, activeReports, activeSessionDocs)
-          : mapQueueItemToPatient(item);
+          ? mapQueueItemToPatient(item, activeSummary, activeReports, activeSessionDocs, activePatientHistory)
+          : mapQueueItemToPatient(item, null, [], [], activePatientHistory);
 
       // Decouple & preserve local prescription drafts
       if (rxDraftsRef.current[item.id]) {
@@ -353,7 +383,7 @@ export default function DoctorWorkspacePage() {
     // Combine active patients + 48h completed patients
     const combined = [...activeFiltered, ...validSignedOff];
     setPatients(combined);
-  }, [rawQueue, selectedConsultationId, activeSummary, activeReports, activeSessionDocs, signedOffPatients]);
+  }, [rawQueue, selectedConsultationId, activeSummary, activeReports, activeSessionDocs, activePatientHistory, signedOffPatients]);
 
   // Active selected patient
   const selectedPatient = useMemo(() => {
@@ -401,7 +431,7 @@ export default function DoctorWorkspacePage() {
         ? `Prescribed: ${selectedPatient.prescriptions.map((p) => `${p.drugName} (${p.dosage}, ${p.frequency})`).join('; ')}`
         : 'Consultation completed and prescription sign-off verified.';
 
-      await doctorService.signOffConsultation(selectedConsultationId, remarksText);
+      await doctorService.signOffConsultation(selectedConsultationId, remarksText, selectedPatient.prescriptions || []);
     } catch {
       // Local state fallback
     }
@@ -437,6 +467,16 @@ export default function DoctorWorkspacePage() {
       />
 
       {/* Error Notification Banner */}
+      {sosAlert && (
+        <div className="bg-red-700 text-white px-4 py-3 flex items-center justify-between gap-3 shadow-lg animate-pulse">
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <span>SOS EMERGENCY: {sosAlert.patient?.full_name || 'Patient'} - Token {sosAlert.token}</span>
+          </div>
+          <button onClick={() => setSosAlert(null)} className="text-xs font-semibold underline">Dismiss</button>
+        </div>
+      )}
+
       {queueError && (
         <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between text-xs text-red-700">
           <div className="flex items-center gap-2">
@@ -506,7 +546,7 @@ export default function DoctorWorkspacePage() {
         {selectedPatient && (
           <EvidenceDrawer
             key={`drawer-${selectedPatient.id}`}
-            patient={selectedPatient} 
+            patient={selectedPatient}
             isOpen={isEvidenceDrawerOpen}
             onToggle={() => setIsEvidenceDrawerOpen((prev) => !prev)}
             onClose={() => setIsEvidenceDrawerOpen(false)}

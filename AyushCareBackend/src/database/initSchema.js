@@ -173,6 +173,13 @@ export const initializeSchema = async () => {
         await addColumn(client, 'consultations', 'ai_session_id', 'VARCHAR(100)');
         await addColumn(client, 'consultations', 'updated_at', 'TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP');
         await addColumn(client, 'consultations', 'token_number', 'VARCHAR(20)');
+        // These upgrades run in the startup transaction and are safe for both
+        // existing installations and databases created by older backend versions.
+        await addColumn(client, 'consultations', 'prescriptions', "JSONB DEFAULT '[]'::jsonb");
+        await addColumn(client, 'consultations', 'signed_off_at', 'TIMESTAMPTZ');
+        await addColumn(client, 'sos_events', 'consultation_id', 'UUID REFERENCES consultations(id) ON DELETE SET NULL');
+        await addColumn(client, 'sos_events', 'reason', 'VARCHAR(255)');
+        await addColumn(client, 'sos_events', 'status', "VARCHAR(50) DEFAULT 'active'");
         await client.query(`ALTER TABLE consultations ALTER COLUMN token_number DROP NOT NULL`);
         await client.query(`ALTER TABLE clinical_summaries ALTER COLUMN chief_complaint DROP NOT NULL`);
         await addColumn(client, 'uploaded_documents', 'page_number', 'INT');
@@ -187,6 +194,7 @@ export const initializeSchema = async () => {
 
         await client.query(`CREATE INDEX IF NOT EXISTS idx_consultations_patient ON consultations(patient_id);`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_consultations_queue ON consultations(hospital_id,status,created_at);`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_consultations_signed_off ON consultations(assigned_doctor_id,status,signed_off_at);`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_documents_consultation ON uploaded_documents(consultation_id,created_at);`);
         await client.query(`CREATE INDEX IF NOT EXISTS idx_kiosk_pairing ON kiosk_sessions(pairing_token) WHERE is_active = TRUE;`);
         await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_privacy_patient ON privacy_settings(patient_id);`);

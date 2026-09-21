@@ -46,6 +46,55 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
     return true;
   });
 
+  const isSignedOff = (patient: Patient) => patient.priority === 'Completed' || patient.status === 'completed';
+  const activePatients = filteredPatients.filter((patient) => !isSignedOff(patient));
+  const signedOffPatients = filteredPatients.filter(isSignedOff);
+
+  const renderPatient = (patient: Patient) => {
+    const isSelected = patient.id === selectedPatientId;
+    const snippet = getQueueSnippet(patient);
+    const isUrgent = patient.priority === 'Urgent';
+
+    return (
+      <div
+        key={patient.id}
+        onClick={() => handlePatientClick(patient.id)}
+        className={`p-3 rounded-xl border transition-all cursor-pointer relative shadow-2xs ${
+          isSelected
+            ? 'bg-[#f0fdfa] border-teal-500/80 ring-1 ring-teal-500/40'
+            : isUrgent
+            ? 'bg-red-50/40 border-red-200/80 hover:bg-red-50/70'
+            : 'bg-white border-slate-200/90 hover:border-slate-300 hover:bg-slate-50/80'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-1.5 mb-1.5 min-w-0">
+          <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${getDotStyle(patient.priority, patient.status)}`} />
+            <span className="font-bold text-xs text-slate-900 shrink-0">{patient.tokenNumber}</span>
+            <span className="font-semibold text-xs text-slate-900 truncate">{patient.name}</span>
+          </div>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 ${getBadgeStyle(patient.priority, patient.status)}`}>
+            {isSignedOff(patient) ? 'Signed Off' : patient.priority}
+          </span>
+        </div>
+        <div className="text-xs text-slate-500 font-medium pl-3.5 flex items-center justify-between gap-2 min-w-0">
+          <div className="truncate flex-1 min-w-0">
+            <span className="text-slate-400">
+              {patient.age ? `${patient.age}y · ` : ''}
+              {patient.gender !== 'Other' ? `${patient.gender.charAt(0)} · ` : ''}
+            </span>
+            <span className="text-slate-700 font-medium truncate" title={snippet}>{snippet}</span>
+          </div>
+          {patient.allergies && patient.allergies.length > 0 && (
+            <span className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.2 rounded border border-red-200 shrink-0">
+              ⚠️ Allg
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const getBadgeStyle = (priority: PriorityStatus, status?: string) => {
     if (priority === 'Completed' || status === 'completed') {
       return 'bg-emerald-50 text-emerald-700 border-emerald-200';
@@ -216,76 +265,20 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
             </p>
           </div>
         ) : (
-          filteredPatients.map((patient) => {
-            const isSelected = patient.id === selectedPatientId;
-            const snippet = getQueueSnippet(patient);
-            const isUrgent = patient.priority === 'Urgent';
-
-            return (
-              <div
-                key={patient.id}
-                onClick={() => handlePatientClick(patient.id)}
-                className={`p-3 rounded-xl border transition-all cursor-pointer relative shadow-2xs ${
-                  isSelected
-                    ? 'bg-[#f0fdfa] border-teal-500/80 ring-1 ring-teal-500/40'
-                    : isUrgent
-                    ? 'bg-red-50/40 border-red-200/80 hover:bg-red-50/70'
-                    : 'bg-white border-slate-200/90 hover:border-slate-300 hover:bg-slate-50/80'
-                }`}
-              >
-                {/* Top Row: Dot + Token + Name & Badge */}
-                <div className="flex items-center justify-between gap-1.5 mb-1.5 min-w-0">
-                  <div className="flex items-center space-x-1.5 min-w-0 flex-1">
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${getDotStyle(
-                        patient.priority,
-                        patient.status
-                      )}`}
-                    />
-                    <span className="font-bold text-xs text-slate-900 shrink-0">
-                      {patient.tokenNumber}
-                    </span>
-                    <span className="font-semibold text-xs text-slate-900 truncate">
-                      {patient.name}
-                    </span>
-                  </div>
-
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 ${getBadgeStyle(
-                      patient.priority,
-                      patient.status
-                    )}`}
-                  >
-                    {patient.priority === 'Completed' || patient.status === 'completed'
-                      ? 'Signed Off'
-                      : patient.priority}
-                  </span>
-                </div>
-
-                {/* Sub row: Demographics & Truncated Clean Complaint Line */}
-                <div className="text-xs text-slate-500 font-medium pl-3.5 flex items-center justify-between gap-2 min-w-0">
-                  <div className="truncate flex-1 min-w-0">
-                    <span className="text-slate-400">
-                      {patient.age ? `${patient.age}y · ` : ''}
-                      {patient.gender !== 'Other' ? `${patient.gender.charAt(0)} · ` : ''}
-                    </span>
-                    <span className="text-slate-700 font-medium truncate" title={snippet}>
-                      {snippet}
-                    </span>
-                  </div>
-
-                  {patient.allergies && patient.allergies.length > 0 && (
-                    <span
-                      className="text-[10px] font-bold text-red-600 bg-red-50 px-1.5 py-0.2 rounded border border-red-200 shrink-0"
-                      title={`Allergies: ${patient.allergies.map((a) => a.drug).join(', ')}`}
-                    >
-                      ⚠️ Allg
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })
+          <div className="space-y-3">
+            {activePatients.length > 0 && (
+              <section className="space-y-2">
+                <h3 className="px-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Active Patients</h3>
+                <div className="space-y-2">{activePatients.map(renderPatient)}</div>
+              </section>
+            )}
+            {signedOffPatients.length > 0 && (
+              <section className="space-y-2 border-t border-slate-200 pt-3">
+                <h3 className="px-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700">Signed Off (Last 48 Hours)</h3>
+                <div className="space-y-2">{signedOffPatients.map(renderPatient)}</div>
+              </section>
+            )}
+          </div>
         )}
       </div>
     </div>

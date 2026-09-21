@@ -2,8 +2,12 @@ import apiClient from '../lib/axios';
 import { ApiResponse, ConsultationQueueItem, ConsultationStatus, Doctor, VisitAnalytics } from '../types/api';
 
 export interface AdminQueueItem extends ConsultationQueueItem {
+  consultation_id?: string;
+  patient_name?: string;
   department?: string;
+  department_name?: string;
   doctor_name?: string;
+  signed_off_at?: string;
 }
 
 export interface DoctorDepartmentAssignment {
@@ -51,6 +55,19 @@ export interface DepartmentReport {
   emergencyCount: number;
   highRiskCount: number;
 }
+
+export interface DepartmentAnalyticsResponse {
+  summary: {
+    totalPatientIntake: number;
+    completedConsults: number;
+    avgWaitMinutes: number;
+    emergencyTriage: number;
+  };
+  departments: DepartmentReport[];
+  timeRange?: 'today' | 'yesterday' | '7d' | '30d';
+}
+
+export type DepartmentTimeRange = 'today' | 'yesterday' | '7d' | '30d';
 
 export interface HistoricalVisitRecord {
   id: string;
@@ -238,66 +255,21 @@ export const adminService = {
   },
 
   getVisitAnalytics: async (timeRange: 'today' | 'yesterday' | 'week' | 'month' = 'today'): Promise<VisitAnalytics> => {
-    try {
-      const response = await apiClient.get<ApiResponse<VisitAnalytics>>('/admin/analytics/visits');
-      const base = response.data.data || { kiosk_visits: 142, token_conversions: 110, consultations_completed: 85 };
-
-      if (timeRange === 'yesterday') {
-        return {
-          kiosk_visits: Math.round(base.kiosk_visits * 0.92),
-          token_conversions: Math.round(base.token_conversions * 0.94),
-          consultations_completed: Math.round(base.consultations_completed * 0.96),
-        };
-      }
-      if (timeRange === 'week') {
-        return {
-          kiosk_visits: base.kiosk_visits * 7 + 45,
-          token_conversions: base.token_conversions * 7 + 32,
-          consultations_completed: base.consultations_completed * 7 + 28,
-        };
-      }
-      if (timeRange === 'month') {
-        return {
-          kiosk_visits: base.kiosk_visits * 30 + 120,
-          token_conversions: base.token_conversions * 30 + 85,
-          consultations_completed: base.consultations_completed * 30 + 72,
-        };
-      }
-
-      return base;
-    } catch {
-      return {
-        kiosk_visits: timeRange === 'yesterday' ? 128 : timeRange === 'week' ? 980 : 142,
-        token_conversions: timeRange === 'yesterday' ? 102 : timeRange === 'week' ? 784 : 110,
-        consultations_completed: timeRange === 'yesterday' ? 88 : timeRange === 'week' ? 620 : 85,
-      };
-    }
+    void timeRange;
+    const response = await apiClient.get<ApiResponse<VisitAnalytics>>('/admin/analytics/visits');
+    return response.data.data || { kiosk_visits: 0, token_conversions: 0, consultations_completed: 0 };
   },
 
-  getDepartmentReports: async (timeRange: 'today' | 'yesterday' | 'week' | 'month' = 'today'): Promise<DepartmentReport[]> => {
-    const multiplier = timeRange === 'yesterday' ? 0.9 : timeRange === 'week' ? 6.8 : timeRange === 'month' ? 28.5 : 1;
-
-    return CANONICAL_DEPARTMENTS.map((dept, i) => {
-      const baseVisits = [28, 22, 19, 18, 16, 15, 14, 12, 11, 10][i] || 12;
-      const totalVisits = Math.round(baseVisits * multiplier);
-      const completedVisits = Math.round(totalVisits * 0.78);
-      const inConsultation = Math.max(1, Math.round(totalVisits * 0.08));
-      const waitingQueue = Math.max(0, totalVisits - completedVisits - inConsultation);
-
-      return {
-        id: dept.id,
-        name: dept.name,
-        pathway: dept.pathway,
-        totalVisits,
-        completedVisits,
-        waitingQueue: timeRange === 'today' ? waitingQueue : 0,
-        inConsultation: timeRange === 'today' ? inConsultation : 0,
-        activeDoctors: dept.pathway === 'ayurveda' ? 2 : 3,
-        avgWaitMinutes: [12, 15, 10, 8, 14, 18, 11, 13, 9, 16][i] || 12,
-        emergencyCount: Math.round((dept.name === 'Cardiology' || dept.name === 'Pulmonology' ? 3 : 1) * (multiplier > 1 ? multiplier * 0.4 : 1)),
-        highRiskCount: Math.round(4 * (multiplier > 1 ? multiplier * 0.5 : 1)),
-      };
+  getDepartmentAnalytics: async (timeRange: DepartmentTimeRange = 'today'): Promise<DepartmentAnalyticsResponse> => {
+    const response = await apiClient.get<ApiResponse<DepartmentAnalyticsResponse>>('/admin/analytics/department-stats', {
+      params: { timeRange },
     });
+    return response.data.data || { summary: { totalPatientIntake: 0, completedConsults: 0, avgWaitMinutes: 0, emergencyTriage: 0 }, departments: [], timeRange };
+  },
+
+  getDepartmentReports: async (timeRange: DepartmentTimeRange = 'today'): Promise<DepartmentReport[]> => {
+    const response = await adminService.getDepartmentAnalytics(timeRange);
+    return response.departments;
   },
 
   getHistoricalVisits: async (timeRange: 'today' | 'yesterday' | 'week' | 'month' = 'yesterday'): Promise<HistoricalVisitRecord[]> => {
@@ -342,17 +314,8 @@ export const adminService = {
   },
 
   getQueue: async (): Promise<AdminQueueItem[]> => {
-    try {
-      const response = await apiClient.get<ApiResponse<AdminQueueItem[]>>('/admin/queue');
-      return response.data.data || [];
-    } catch {
-      try {
-        const fallback = await apiClient.get<ApiResponse<AdminQueueItem[]>>('/doctor/queue');
-        return fallback.data.data || [];
-      } catch {
-        return [];
-      }
-    }
+    const response = await apiClient.get<ApiResponse<AdminQueueItem[]>>('/admin/tokens/live-queue');
+    return response.data.data || [];
   },
 
   overrideQueue: async (consultationId: string, newStatus: ConsultationStatus): Promise<void> => {

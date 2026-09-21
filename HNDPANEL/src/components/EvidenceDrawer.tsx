@@ -223,7 +223,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
 
                 {patient.documents.length === 0 ? (
                   <div className="p-4 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-400">
-                    No uploaded physical documents or scanned reports for this consultation.
+                    No uploaded physical documents or scanned reports for this patient.
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -242,7 +242,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
                                   {doc.name}
                                 </p>
                                 <p className="text-[10px] text-slate-400 font-medium">
-                                  {doc.date} · {doc.size}
+                                  {doc.visitDate ? `${doc.visitDate} · ` : ''}{doc.date} · {doc.size}
                                 </p>
                               </div>
                             </div>
@@ -267,7 +267,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
                                 {doc.name}
                               </p>
                               <p className="text-[10px] text-slate-400 font-medium">
-                                {doc.date} · {doc.size}
+                                {doc.visitDate ? `${doc.visitDate} · ` : ''}{doc.date} · {doc.size}
                               </p>
                             </div>
                           </div>
@@ -357,8 +357,27 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
               </span>
 
               <div className="relative pl-4 border-l-2 border-slate-200 space-y-5">
-                {/* Event 1: Intake & Triage */}
-                <div className="relative">
+                {/* Current and prior consultations */}
+                {patient.pastVisits && patient.pastVisits.length > 0 ? patient.pastVisits.map((visit, idx) => (
+                  <div key={`timeline-visit-${visit.consultationId}-${idx}`} className="relative">
+                    <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-white ${idx === 0 ? 'bg-[#064e4b]' : 'bg-slate-300'}`} />
+                    <div className="text-[10px] font-bold text-slate-400">
+                      {visit.createdAt ? new Date(visit.createdAt).toLocaleDateString().toUpperCase() : 'VISIT'}
+                    </div>
+                    <div className="text-xs font-bold text-slate-900 mt-0.5">
+                      {visit.department || 'AyushCare OPD'} · {visit.tokenNumber || 'Consultation'}
+                    </div>
+                    {visit.doctorName && <div className="text-[10px] text-slate-500 mt-0.5">Attending: {visit.doctorName}</div>}
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      {visit.diagnosis ? `Diagnosis: ${visit.diagnosis}` : visit.chiefComplaint || visit.remarks || 'Consultation recorded.'}
+                    </p>
+                    {visit.prescriptions && visit.prescriptions.length > 0 && (
+                      <p className="text-[10px] text-teal-700 mt-1 font-medium">
+                        Prescription: {visit.prescriptions.map((rx) => rx.drugName).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                )) : <div className="relative">
                   <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-[#064e4b] ring-4 ring-white" />
                   <div className="text-[10px] font-bold text-slate-400">
                     {patient.createdAt ? new Date(patient.createdAt).toLocaleDateString().toUpperCase() : 'CURRENT VISIT'}
@@ -367,7 +386,7 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
                   <p className="text-[11px] text-slate-600 mt-1">
                     {patient.chiefComplaint || 'Chief complaint recorded. Triage transcript logged.'}
                   </p>
-                </div>
+                </div>}
 
                 {/* Event 2: Documents uploaded if any */}
                 {patient.documents.map((doc, idx) => (

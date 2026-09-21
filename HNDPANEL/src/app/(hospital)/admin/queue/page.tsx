@@ -18,6 +18,7 @@ import {
   Clock,
   ChevronRight,
 } from 'lucide-react';
+import { subscribeToSosAlerts } from '../../../../lib/socket';
 
 interface HospitalToken {
   id: string;
@@ -28,7 +29,16 @@ interface HospitalToken {
   status: ConsultationStatus;
   riskLevel: 'routine' | 'high_risk' | 'emergency';
   time: string;
+  signedOffAt?: string;
 }
+
+const statusLabel = (status: ConsultationStatus) => {
+  if (status === 'complete') return 'Completed';
+  if (status === 'call') return 'In Consultation';
+  if (status === 'waiting_triage') return 'Waiting Triage';
+  if (status === 'in_queue') return 'Waiting';
+  return status.replace('_', ' ');
+};
 
 export default function AdminQueuePage() {
   const [analytics, setAnalytics] = useState<VisitAnalytics>({
@@ -40,6 +50,7 @@ export default function AdminQueuePage() {
   const [tokens, setTokens] = useState<HospitalToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sosAlert, setSosAlert] = useState<any | null>(null);
 
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
@@ -59,14 +70,15 @@ export default function AdminQueuePage() {
       const mappedTokens: HospitalToken[] = (rawQueue || []).map((item: AdminQueueItem) => ({
         id: item.id,
         tokenNumber: item.token_number,
-        patientName: item.full_name,
-        department: item.department || 'General Medicine OPD',
-        doctorName: item.doctor_name || 'Attending OPD Clinician',
+        patientName: item.patient_name || item.full_name,
+        department: item.department_name || item.department || 'Unassigned Department',
+        doctorName: item.doctor_name || 'Unassigned Clinician',
         status: item.status,
         riskLevel: item.risk_level,
         time: item.created_at
           ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           : 'Active in Queue',
+        signedOffAt: item.signed_off_at,
       }));
 
       setTokens(mappedTokens);
@@ -79,6 +91,14 @@ export default function AdminQueuePage() {
 
   useEffect(() => {
     fetchDashboardData();
+    const unsubscribeSos = subscribeToSosAlerts((alert) => {
+      setSosAlert(alert);
+      fetchDashboardData();
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('AyushCare SOS Emergency', { body: `${alert.patient?.full_name || 'Patient'} - ${alert.token}` });
+      }
+    });
+    return unsubscribeSos;
   }, [fetchDashboardData]);
 
   const handleStatusOverride = async (tokenId: string, newStatus: ConsultationStatus) => {
@@ -102,6 +122,16 @@ export default function AdminQueuePage() {
 
   return (
     <div className="space-y-4 sm:space-y-6 max-w-7xl mx-auto pb-12">
+      {sosAlert && (
+        <div className="bg-red-700 text-white px-4 py-3 rounded-xl flex items-center justify-between gap-3 shadow-lg animate-pulse">
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+            <span>SOS EMERGENCY: {sosAlert.patient?.full_name || 'Patient'} - Token {sosAlert.token}</span>
+          </div>
+          <button onClick={() => setSosAlert(null)} className="text-xs font-semibold underline">Dismiss</button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white border border-slate-200/90 p-4 sm:p-5 rounded-2xl shadow-xs">
         <div>
@@ -242,9 +272,10 @@ export default function AdminQueuePage() {
                   </div>
 
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                    <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                      Status: {token.status}
+                      <span className="text-[11px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                      Status: {statusLabel(token.status)}
                     </span>
+                    <span className="text-[10px] text-slate-400">{token.time}</span>
 
                     <select
                       value={token.status}
@@ -273,6 +304,7 @@ export default function AdminQueuePage() {
                     <th className="px-4 py-3">ASSIGNED CLINICIAN</th>
                     <th className="px-4 py-3">RISK LEVEL</th>
                     <th className="px-4 py-3">CURRENT STATUS</th>
+                    <th className="px-4 py-3">TIME GENERATED</th>
                     <th className="px-4 py-3 text-right">QUEUE ACTION OVERRIDE</th>
                   </tr>
                 </thead>
@@ -298,9 +330,10 @@ export default function AdminQueuePage() {
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-700 border border-slate-200">
-                          {token.status}
+                          {statusLabel(token.status)}
                         </span>
                       </td>
+                      <td className="px-4 py-3.5 text-slate-500 whitespace-nowrap">{token.time}</td>
                       <td className="px-4 py-3.5 text-right">
                         <select
                           value={token.status}

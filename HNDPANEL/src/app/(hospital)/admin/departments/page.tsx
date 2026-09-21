@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { adminService, DepartmentReport } from '../../../../services/admin.service';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { adminService, DepartmentReport, DepartmentTimeRange } from '../../../../services/admin.service';
 import {
   Building2,
   Clock,
@@ -10,36 +10,34 @@ import {
   AlertTriangle,
   RefreshCw,
   Search,
-  Filter,
-  TrendingUp,
-  Sparkles,
-  ChevronRight,
   Activity,
-  Layers,
 } from 'lucide-react';
 
 export default function AdminDepartmentsPage() {
   const [reports, setReports] = useState<DepartmentReport[]>([]);
+  const [summary, setSummary] = useState({ totalPatientIntake: 0, completedConsults: 0, avgWaitMinutes: 0, emergencyTriage: 0 });
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<'today' | 'yesterday' | 'week' | 'month'>('today');
+  const [timeRange, setTimeRange] = useState<DepartmentTimeRange>('today');
   const [pathwayFilter, setPathwayFilter] = useState<'all' | 'allopathy' | 'ayurveda'>('all');
   const [search, setSearch] = useState('');
 
-  const fetchReports = async (range = timeRange) => {
+  const fetchReports = useCallback(async (range: DepartmentTimeRange) => {
     setLoading(true);
     try {
-      const data = await adminService.getDepartmentReports(range);
-      setReports(data);
+      const data = await adminService.getDepartmentAnalytics(range);
+      setReports(data.departments);
+      setSummary(data.summary);
     } catch {
       setReports([]);
+      setSummary({ totalPatientIntake: 0, completedConsults: 0, avgWaitMinutes: 0, emergencyTriage: 0 });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchReports(timeRange);
-  }, [timeRange]);
+  }, [fetchReports, timeRange]);
 
   const filteredReports = useMemo(() => {
     return reports.filter((r) => {
@@ -48,19 +46,6 @@ export default function AdminDepartmentsPage() {
       return matchesPathway && matchesSearch;
     });
   }, [reports, pathwayFilter, search]);
-
-  const aggregateMetrics = useMemo(() => {
-    const totalVisits = filteredReports.reduce((sum, r) => sum + r.totalVisits, 0);
-    const completed = filteredReports.reduce((sum, r) => sum + r.completedVisits, 0);
-    const inQueue = filteredReports.reduce((sum, r) => sum + r.waitingQueue, 0);
-    const emergencies = filteredReports.reduce((sum, r) => sum + r.emergencyCount, 0);
-    const avgWait =
-      filteredReports.length > 0
-        ? Math.round(filteredReports.reduce((sum, r) => sum + r.avgWaitMinutes, 0) / filteredReports.length)
-        : 0;
-
-    return { totalVisits, completed, inQueue, emergencies, avgWait };
-  }, [filteredReports]);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -79,7 +64,7 @@ export default function AdminDepartmentsPage() {
         {/* Time Filter Buttons & Refresh */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <div className="grid grid-cols-4 p-1 bg-slate-100 rounded-xl border border-slate-200 w-full sm:w-auto text-xs">
-            {(['today', 'yesterday', 'week', 'month'] as const).map((range) => (
+            {(['today', 'yesterday', '7d', '30d'] as const).map((range) => (
               <button
                 key={range}
                 type="button"
@@ -90,7 +75,7 @@ export default function AdminDepartmentsPage() {
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {range === 'week' ? '7 Days' : range === 'month' ? '30 Days' : range}
+                  {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : range}
               </button>
             ))}
           </div>
@@ -115,7 +100,7 @@ export default function AdminDepartmentsPage() {
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            {loading ? '...' : aggregateMetrics.totalVisits}
+            {loading ? '...' : summary.totalPatientIntake}
           </div>
           <p className="text-[10px] text-teal-700 font-semibold mt-1">
             Across {filteredReports.length} Active Departments
@@ -130,11 +115,11 @@ export default function AdminDepartmentsPage() {
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            {loading ? '...' : aggregateMetrics.completed}
+            {loading ? '...' : summary.completedConsults}
           </div>
           <p className="text-[10px] text-emerald-700 font-semibold mt-1">
-            {aggregateMetrics.totalVisits > 0
-              ? `${Math.round((aggregateMetrics.completed / aggregateMetrics.totalVisits) * 100)}% clearance rate`
+            {summary.totalPatientIntake > 0
+              ? `${Math.round((summary.completedConsults / summary.totalPatientIntake) * 100)}% clearance rate`
               : '0% clearance'}
           </p>
         </div>
@@ -147,7 +132,7 @@ export default function AdminDepartmentsPage() {
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            {loading ? '...' : `${aggregateMetrics.avgWait}m`}
+            {loading ? '...' : `${summary.avgWaitMinutes}m`}
           </div>
           <p className="text-[10px] text-amber-700 font-semibold mt-1">
             Kiosk token to OPD consultation
@@ -162,7 +147,7 @@ export default function AdminDepartmentsPage() {
             </div>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
-            {loading ? '...' : aggregateMetrics.emergencies}
+            {loading ? '...' : summary.emergencyTriage}
           </div>
           <p className="text-[10px] text-rose-700 font-semibold mt-1">
             Red flag biosensor priorities
@@ -203,7 +188,16 @@ export default function AdminDepartmentsPage() {
 
       {/* Department Cards Grid (Responsive 1 col mobile, 2 col tablet, 3 col desktop) */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filteredReports.map((dept) => {
+        {loading ? (
+          [1, 2, 3].map((item) => (
+            <div key={item} className="h-56 rounded-2xl border border-slate-200 bg-white animate-pulse" />
+          ))
+        ) : filteredReports.length === 0 ? (
+          <div className="md:col-span-2 xl:col-span-3 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+            <p className="text-sm font-semibold text-slate-700">No department visits recorded today</p>
+            <p className="mt-1 text-xs text-slate-500">Live department cards will appear when consultations are registered.</p>
+          </div>
+        ) : filteredReports.map((dept) => {
           const isAyush = dept.pathway === 'ayurveda';
           const completionPct =
             dept.totalVisits > 0 ? Math.round((dept.completedVisits / dept.totalVisits) * 100) : 0;
