@@ -59,6 +59,14 @@ function App() {
 
   const qrExchangeInProgressRef = useRef(false);
 
+  const LoadingScreen = ({ message = "Loading AyushCare…", detail = "Please wait while we prepare your secure patient view." }) => (
+    <div className="mobile-app-loading" role="status" aria-live="polite">
+      <div className="mobile-loading-orbit" aria-hidden="true"><div className="mobile-loading-spinner" /></div>
+      <strong>{message}</strong>
+      <span>{detail}</span>
+    </div>
+  );
+
   const [isExchangingQr, setIsExchangingQr] = useState(() => {
     if (typeof window === "undefined") return false;
     const searchParam = new URLSearchParams(window.location.search).get("qr_token");
@@ -252,27 +260,7 @@ function App() {
   const renderScreen = () => {
     if (isExchangingQr) {
       return (
-        <div
-          className="mobile-app-loading"
-          style={{
-            minHeight: "80vh",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "14px",
-            padding: "24px",
-            textAlign: "center",
-          }}
-        >
-          <div className="mobile-loading-spinner" />
-          <div style={{ fontWeight: 600, fontSize: "16px", color: "#044e42" }}>
-            Connecting to Kiosk Session…
-          </div>
-          <div style={{ fontSize: "13px", color: "#64748b" }}>
-            Verifying your patient account and opening document upload
-          </div>
-        </div>
+        <LoadingScreen message="Connecting to Kiosk Session…" detail="Verifying your patient account and opening document upload." />
       );
     }
 
@@ -332,10 +320,7 @@ function App() {
     <>
       <Suspense
         fallback={
-          <div className="mobile-app-loading">
-            <div className="mobile-loading-spinner" />
-            <span>Loading AyushCare…</span>
-          </div>
+          <LoadingScreen />
         }
       >
         <ErrorBoundary onReset={() => setScreen(SCREENS.M1)}>

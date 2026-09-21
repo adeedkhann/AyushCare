@@ -6,6 +6,8 @@ import {
   ChevronRight,
   ZoomIn,
   AlertCircle,
+  Download,
+  ExternalLink,
 } from "lucide-react";
 
 import DocumentPreview from "./DocumentPreview";
@@ -47,6 +49,7 @@ export const OriginalDocModal = () => {
     isOriginalDocModalOpen,
     setOriginalDocModalOpen,
     capturedDocument,
+    medicalRecords,
   } = useMobileStore();
 
   const { isHindi, tr } = useLanguage();
@@ -56,10 +59,12 @@ export const OriginalDocModal = () => {
 
   const [imageError, setImageError] =
     React.useState(false);
+  const [documentIndex, setDocumentIndex] = React.useState(0);
 
   React.useEffect(() => {
     setCurrentPageIndex(0);
     setImageError(false);
+    setDocumentIndex(0);
   }, [
     isOriginalDocModalOpen,
     capturedDocument?.id,
@@ -70,8 +75,15 @@ export const OriginalDocModal = () => {
     return null;
   }
 
-  const rawPages = Array.isArray(capturedDocument?.pages)
-    ? capturedDocument.pages
+  const documentList = Array.isArray(capturedDocument?.documents) && capturedDocument.documents.length
+    ? capturedDocument.documents
+    : Array.isArray(medicalRecords) && medicalRecords.length
+      ? medicalRecords
+      : [capturedDocument];
+  const activeDocument = documentList[Math.min(documentIndex, documentList.length - 1)] || capturedDocument;
+
+  const rawPages = Array.isArray(activeDocument?.pages)
+    ? activeDocument.pages
     : [];
 
   const pages =
@@ -81,15 +93,15 @@ export const OriginalDocModal = () => {
           {
             id: "page-1",
             fileName:
-              capturedDocument?.fileName ||
+              activeDocument?.fileName || activeDocument?.title ||
               (tr('Original Document', 'मूल दस्तावेज़')),
             image:
-              capturedDocument?.image ||
-              capturedDocument?.dataUrl ||
+              activeDocument?.image ||
+              activeDocument?.dataUrl || activeDocument?.download_url || activeDocument?.document_url || activeDocument?.url ||
               null,
             dataUrl:
-              capturedDocument?.dataUrl ||
-              capturedDocument?.image ||
+              activeDocument?.dataUrl ||
+              activeDocument?.image || activeDocument?.download_url || activeDocument?.document_url || activeDocument?.url ||
               null,
           },
         ];
@@ -108,16 +120,16 @@ export const OriginalDocModal = () => {
     activePage?.dataUrl ||
     activePage?.previewUrl ||
     activePage?.imageUrl ||
-    capturedDocument?.document_url ||
-    capturedDocument?.download_url ||
-    capturedDocument?.url ||
-    capturedDocument?.image ||
-    capturedDocument?.dataUrl ||
+    activeDocument?.document_url ||
+    activeDocument?.download_url ||
+    activeDocument?.url ||
+    activeDocument?.image ||
+    activeDocument?.dataUrl ||
     null;
 
   const isPdf = Boolean(
     activePage?.mimeType?.includes("pdf") ||
-    capturedDocument?.mimeType?.includes("pdf") ||
+    activeDocument?.mimeType?.includes("pdf") || activeDocument?.source_mime_type?.includes("pdf") ||
     String(currentImage || "").toLowerCase().includes(".pdf")
   );
 
@@ -125,22 +137,21 @@ export const OriginalDocModal = () => {
 
   const documentName =
     activePage?.fileName ||
-    capturedDocument?.fileName ||
-    capturedDocument?.title ||
+    activeDocument?.fileName || activeDocument?.title ||
     (tr('Original Medical Document', 'मूल चिकित्सीय दस्तावेज़'));
 
   const docSummary =
-    capturedDocument?.summary ||
-    capturedDocument?.extractedInformation?.summary ||
-    capturedDocument?.extracted_data?.summary ||
-    capturedDocument?.extractedInformation?.ai_summary ||
-    capturedDocument?.extracted_data?.ai_summary ||
+    activeDocument?.summary ||
+    activeDocument?.extractedInformation?.summary ||
+    activeDocument?.extracted_data?.summary ||
+    activeDocument?.extractedInformation?.ai_summary ||
+    activeDocument?.extracted_data?.ai_summary ||
     null;
 
   const docHealthInfo =
-    capturedDocument?.health_info ||
-    capturedDocument?.extractedInformation?.health_info ||
-    capturedDocument?.extracted_data?.health_info ||
+    activeDocument?.health_info ||
+    activeDocument?.extractedInformation?.health_info ||
+    activeDocument?.extracted_data?.health_info ||
     null;
 
   const goToPreviousPage = () => {
@@ -159,7 +170,7 @@ export const OriginalDocModal = () => {
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+      className="fixed inset-0 z-60 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={
@@ -204,6 +215,14 @@ export const OriginalDocModal = () => {
         </header>
 
         {/* Page selector */}
+        {documentList.length > 1 && (
+          <div className="shrink-0 px-3 py-2 bg-slate-900 border-b border-slate-800">
+            <label className="sr-only" htmlFor="original-document-select">Select document</label>
+            <select id="original-document-select" value={documentIndex} onChange={(event) => { setDocumentIndex(Number(event.target.value)); setCurrentPageIndex(0); setImageError(false); }} className="w-full min-h-10 rounded-xl bg-slate-800 text-white border border-slate-700 px-3 text-xs font-bold">
+              {documentList.map((document, index) => <option key={document?.id || index} value={index}>{index + 1}. {document?.title || document?.fileName || tr('Medical document', 'चिकित्सीय दस्तावेज़')}</option>)}
+            </select>
+          </div>
+        )}
         {totalPages > 1 && (
           <div className="shrink-0 px-4 py-2.5 bg-slate-900 border-b border-slate-800">
             <div className="flex items-center gap-2 overflow-x-auto">
@@ -232,7 +251,7 @@ export const OriginalDocModal = () => {
         <div className="flex-1 overflow-y-auto bg-slate-900 p-3 sm:p-4">
           <div className="rounded-2xl overflow-hidden bg-white shadow-xl">
             {isPdf && currentImage ? (
-              <div className="flex flex-col items-center justify-center p-3 bg-slate-900 min-h-[360px]">
+              <div className="flex flex-col items-center justify-center p-3 bg-slate-900 min-h-90">
                 {isCloudinaryPdf ? (
                   <div className="relative w-full rounded-xl overflow-hidden bg-white">
                     <img
@@ -249,6 +268,7 @@ export const OriginalDocModal = () => {
                     className="w-full h-[55vh] rounded-xl bg-white border border-slate-700"
                   />
                 )}
+                <div className="mt-3 flex flex-wrap justify-center gap-2">
                 <a
                   href={currentImage}
                   target="_blank"
@@ -258,6 +278,10 @@ export const OriginalDocModal = () => {
                   <FileText className="w-4 h-4" />
                   {tr('Open Full PDF Document', 'पूरा PDF दस्तावेज़ खोलें')}
                 </a>
+                <a href={currentImage} download className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-600 text-slate-200 text-xs font-bold hover:bg-slate-800 transition">
+                  <Download className="w-4 h-4" /> {tr('Download', 'डाउनलोड')}
+                </a>
+                </div>
               </div>
             ) : currentImage && !imageError ? (
               <div className="relative">
@@ -281,7 +305,7 @@ export const OriginalDocModal = () => {
                 </div>
               </div>
             ) : (
-              <div className="min-h-[280px] flex flex-col items-center justify-center px-6 py-8 text-center bg-slate-50">
+              <div className="min-h-70 flex flex-col items-center justify-center px-6 py-8 text-center bg-slate-50">
                 <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100">
                   <FileText className="w-7 h-7" />
                 </div>
@@ -305,6 +329,7 @@ export const OriginalDocModal = () => {
                 )}
 
                 {currentImage && (
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
                   <a
                     href={currentImage}
                     target="_blank"
@@ -314,6 +339,8 @@ export const OriginalDocModal = () => {
                     <FileText className="w-4 h-4" />
                     {tr('Open Document File', 'दस्तावेज़ फ़ाइल खोलें')}
                   </a>
+                  <a href={currentImage} download className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 text-slate-700 text-xs font-bold hover:bg-slate-100 transition"><Download className="w-4 h-4" /> {tr('Download', 'डाउनलोड')}</a>
+                  </div>
                 )}
               </div>
             )}
@@ -371,7 +398,7 @@ export const OriginalDocModal = () => {
           <button
             type="button"
             onClick={() => setOriginalDocModalOpen(false)}
-            className="w-full min-h-[46px] rounded-xl bg-teal-700 hover:bg-teal-600 active:bg-teal-800 text-white text-sm font-black cursor-pointer transition"
+            className="w-full min-h-11.5 rounded-xl bg-teal-700 hover:bg-teal-600 active:bg-teal-800 text-white text-sm font-black cursor-pointer transition"
           >
             {tr('Done Viewing', 'समीक्षा पूरी करें')}
           </button>

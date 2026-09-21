@@ -290,6 +290,7 @@ export const DocumentDetailsScreen = () => {
       summary: extraction?.summary || record?.summary || extraction?.ai_summary || null,
       health_info: extraction?.health_info || record?.health_info || null,
       extractedInformation: extraction,
+      documents: medicalRecords,
       document_url: fileUrl,
       download_url: fileUrl,
       url: fileUrl,
