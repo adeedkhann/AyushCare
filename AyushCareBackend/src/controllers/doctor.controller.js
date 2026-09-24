@@ -59,8 +59,13 @@ export const getPatientSummary = asyncHandler(async (req, res) => {
     if (!allowed) return res.status(200).json(new ApiResponse(200, { consultation_id: consultation.rows[0].id, abha_number: consultation.rows[0].abha_number, restricted: true }, 'Patient has restricted this visit from doctor view'));
     const summary = await pool.query('SELECT * FROM clinical_summaries WHERE consultation_id = $1', [req.params.id]);
     const summaryData = summary.rows[0] || {};
+    const consultationData = consultation.rows[0];
     return res.status(200).json(new ApiResponse(200, {
         ...summaryData,
+        clinical_summary: summaryData.clinical_summary || consultationData.clinical_summary || summaryData.history_of_present_illness || summaryData.ai_payload?.summary_text || '',
+        hpi_narrative: summaryData.history_of_present_illness || consultationData.history_of_present_illness || summaryData.clinical_summary || consultationData.clinical_summary || '',
+        ai_draft: summaryData.ai_payload?.ai_draft || { summary: summaryData.ai_payload?.summary_text || '' },
+        socrates_assessment: summaryData.socrates_assessment || consultationData.socrates_assessment || summaryData.ai_payload?.socrates_assessment || summaryData.ai_payload?.socrates || {},
         intake_mode: consultation.rows[0].intake_mode || 'interview',
         patient_audio_url: consultation.rows[0].patient_audio_url || null,
         patient_transcript: consultation.rows[0].patient_transcript || null,
@@ -186,4 +191,46 @@ export const signOffConsultation = asyncHandler(async (req, res) => {
         [remarks, JSON.stringify(prescriptions), req.params.id]
     );
     return res.status(200).json(new ApiResponse(200, {}, "Consultation completed and saved"));
+});
+
+export const updateClinicalSummary = asyncHandler(async (req, res) => {
+    const { chiefComplaint, clinicalSummary, socratesAssessment } = req.body || {};
+    const consultation = await pool.query(
+        `SELECT id, patient_id, hospital_id, assigned_doctor_id FROM consultations WHERE id = $1 LIMIT 1`,
+        [req.params.id]
+    );
+    if (!consultation.rowCount) throw new ApiError(404, 'Consultation not found');
+    const current = consultation.rows[0];
+    if (String(current.assigned_doctor_id) !== String(req.user.id)) throw new ApiError(403, 'This consultation is not assigned to you');
+    const allowed = await canDoctorAccess({
+        patientId: current.patient_id,
+        hospitalId: current.hospital_id,
+        consultationId: current.id,
+        category: 'visits',
+    });
+    if (!allowed) throw new ApiError(403, 'Patient has restricted this visit from doctor view');
+    if (typeof chiefComplaint !== 'string' || typeof clinicalSummary !== 'string' || !socratesAssessment || typeof socratesAssessment !== 'object') {
+        throw new ApiError(400, 'chiefComplaint, clinicalSummary, and socratesAssessment are required');
+    }
+
+    const updated = await pool.query(
+        `INSERT INTO clinical_summaries
+            (consultation_id, chief_complaint, clinical_summary, history_of_present_illness, socrates_assessment, ai_payload, generated_at, updated_at)
+         VALUES ($1, $2, $3, $3, $4::jsonb, jsonb_build_object('socrates_assessment', $4::jsonb, 'summary_text', $3), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+         ON CONFLICT (consultation_id) DO UPDATE SET
+            chief_complaint = EXCLUDED.chief_complaint,
+            clinical_summary = EXCLUDED.clinical_summary,
+            history_of_present_illness = EXCLUDED.history_of_present_illness,
+            socrates_assessment = EXCLUDED.socrates_assessment,
+            ai_payload = COALESCE(clinical_summaries.ai_payload, '{}'::jsonb) || EXCLUDED.ai_payload,
+            updated_at = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [req.params.id, chiefComplaint.trim(), clinicalSummary.trim(), JSON.stringify(socratesAssessment)]
+    );
+    const summary = updated.rows[0];
+    return res.status(200).json(new ApiResponse(200, {
+        ...summary,
+        hpi_narrative: summary.history_of_present_illness,
+        ai_draft: { summary: summary.clinical_summary },
+    }, 'Clinical summary updated'));
 });

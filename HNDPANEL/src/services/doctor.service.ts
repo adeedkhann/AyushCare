@@ -13,6 +13,12 @@ export interface PatientHistoryResponse {
   documents: UploadedDocument[];
 }
 
+export interface ClinicalSummaryUpdate {
+  chiefComplaint: string;
+  clinicalSummary: string;
+  socratesAssessment: Record<string, any>;
+}
+
 export const doctorService = {
   getQueue: async (): Promise<ConsultationQueueItem[]> => {
     const response = await apiClient.get<ApiResponse<ConsultationQueueItem[]>>('/doctor/queue');
@@ -21,6 +27,14 @@ export const doctorService = {
 
   getPatientSummary: async (consultationId: string): Promise<ClinicalSummary> => {
     const response = await apiClient.get<ApiResponse<ClinicalSummary>>(`/doctor/patients/${consultationId}/summary`);
+    return response.data.data;
+  },
+
+  updateClinicalSummary: async (consultationId: string, update: ClinicalSummaryUpdate): Promise<ClinicalSummary> => {
+    const response = await apiClient.patch<ApiResponse<ClinicalSummary>>(
+      `/doctor/consultations/${consultationId}/clinical-summary`,
+      update
+    );
     return response.data.data;
   },
 

@@ -90,9 +90,12 @@ export interface PastVisit {
   doctorName?: string;
   chiefComplaint?: string;
   diagnosis?: string;
+  diagnosisCode?: string;
+  diagnosisCodes?: string[];
   historyOfPresentIllness?: string;
   remarks?: string;
   prescriptions?: PrescriptionItem[];
+  documents?: DocumentFile[];
 }
 
 export interface DrugAllergy {

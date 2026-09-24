@@ -331,7 +331,7 @@ export default function DoctorWorkspacePage() {
               if (isMountedRef.current) setLiveConsentNotification(null);
             }, 4500);
           }
-          return summary;
+          return summary || prev;
         });
 
         if (sessionDocs.length > 0) {
@@ -396,7 +396,8 @@ export default function DoctorWorkspacePage() {
     if (selectedPatient) {
       const hasDocs = selectedPatient.documents && selectedPatient.documents.length > 0;
       const hasTranscripts = selectedPatient.transcripts && selectedPatient.transcripts.length > 0;
-      if (!hasDocs && !hasTranscripts) {
+      const hasTimeline = selectedPatient.pastVisits && selectedPatient.pastVisits.length > 0;
+      if (!hasDocs && !hasTranscripts && !hasTimeline) {
         setIsEvidenceDrawerOpen(false);
       } else {
         setIsEvidenceDrawerOpen(true);
@@ -414,7 +415,17 @@ export default function DoctorWorkspacePage() {
       socrates: updated.socrates,
     };
 
-    setPatients((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    const savedSummary = await doctorService.updateClinicalSummary(updated.id, {
+      chiefComplaint: updated.chiefComplaint,
+      clinicalSummary: updated.historyOfPresentIllness || updated.narrativeSummary || '',
+      socratesAssessment: updated.socrates,
+    });
+    setPatients((prev) => prev.map((p) => (p.id === updated.id ? {
+      ...updated,
+      chiefComplaint: savedSummary.chief_complaint || updated.chiefComplaint,
+      historyOfPresentIllness: savedSummary.clinical_summary || savedSummary.hpi_narrative || savedSummary.history_of_present_illness || updated.historyOfPresentIllness,
+      narrativeSummary: savedSummary.clinical_summary || savedSummary.hpi_narrative || updated.narrativeSummary,
+    } : p)));
     try {
       await doctorService.updateConsultationStatus(updated.id, 'in_queue');
     } catch {

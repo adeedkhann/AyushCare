@@ -55,10 +55,12 @@ export const initializeSchema = async () => {
         );`);
         await client.query(`CREATE TABLE IF NOT EXISTS clinical_summaries (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(), consultation_id UUID UNIQUE REFERENCES consultations(id) ON DELETE CASCADE,
-            chief_complaint TEXT, history_of_present_illness TEXT, past_medical_history JSONB DEFAULT '[]', drug_allergies JSONB DEFAULT '[]',
+            chief_complaint TEXT, clinical_summary TEXT, socrates_assessment JSONB DEFAULT '{}', history_of_present_illness TEXT, past_medical_history JSONB DEFAULT '[]', drug_allergies JSONB DEFAULT '[]',
             medications JSONB DEFAULT '[]', ayush_attributes JSONB DEFAULT '{}', ai_payload JSONB DEFAULT '{}', generated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );`);
+        await addColumn(client, 'clinical_summaries', 'clinical_summary', 'TEXT');
+        await addColumn(client, 'clinical_summaries', 'socrates_assessment', "JSONB DEFAULT '{}'::jsonb");
         await client.query(`CREATE TABLE IF NOT EXISTS uploaded_documents (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(), consultation_id UUID REFERENCES consultations(id) ON DELETE CASCADE,
             file_path_hash VARCHAR(512) NOT NULL, document_type VARCHAR(100), page_number INT, total_pages INT,

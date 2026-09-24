@@ -92,6 +92,10 @@ export interface ClinicalSummary {
   consultation_id?: string;
   chief_complaint?: string;
   history_of_present_illness?: string;
+  clinical_summary?: string;
+  hpi_narrative?: string;
+  ai_draft?: { summary?: string; [key: string]: any };
+  socrates_assessment?: Record<string, any>;
   past_medical_history?: Array<{
     category?: string;
     condition?: string;

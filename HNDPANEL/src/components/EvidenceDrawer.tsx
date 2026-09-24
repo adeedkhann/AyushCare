@@ -1,18 +1,13 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { Patient, DocumentFile } from '../types/clinical';
+import React, { useState } from 'react';
+import { Patient, DocumentFile, PastVisit } from '../types/clinical';
 import { DocumentViewerModal, resolveDocumentUrl } from './DocumentViewerModal';
 import {
   FileText,
   Clock,
-  MessageSquareQuote,
   FileCheck,
   ExternalLink,
-  Bot,
-  User,
-  Volume2,
-  Pause,
   ArrowRight,
   FileSpreadsheet,
   PanelRightClose,
@@ -21,7 +16,6 @@ import {
   Eye,
   Sparkles,
   Lock,
-  ShieldAlert,
   Pill,
 } from 'lucide-react';
 
@@ -38,36 +32,31 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
   onToggle,
   onClose,
 }) => {
-  const [activeDrawerTab, setActiveDrawerTab] = useState<'Docs' | 'Timeline' | 'Transcript'>('Docs');
-  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [activeDrawerTab, setActiveDrawerTab] = useState<'Docs' | 'Timeline'>('Docs');
   const [selectedDocForViewer, setSelectedDocForViewer] = useState<DocumentFile | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const toggleAudio = (id: string, audioUrl?: string) => {
-    if (playingAudioId === id) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-      setPlayingAudioId(null);
-    } else {
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-
-      const resolved = resolveDocumentUrl(audioUrl);
-      if (resolved && (resolved.startsWith('http') || resolved.startsWith('blob:'))) {
-        const audio = new Audio(resolved);
-        audioRef.current = audio;
-        audio.play().catch(() => {});
-        audio.onended = () => setPlayingAudioId(null);
-      } else {
-        setTimeout(() => {
-          setPlayingAudioId((curr) => (curr === id ? null : curr));
-        }, 4000);
-      }
-      setPlayingAudioId(id);
-    }
+  const historicalVisits = Array.isArray(patient.pastVisits) ? patient.pastVisits : [];
+  const currentVisit: PastVisit = {
+    consultationId: patient.id,
+    tokenNumber: patient.tokenNumber,
+    createdAt: patient.createdAt,
+    department: patient.department,
+    pathway: patient.departmentPathway,
+    chiefComplaint: patient.chiefComplaint,
+    prescriptions: patient.prescriptions,
+    documents: patient.documents.filter((document) => document.consultationId === patient.id),
   };
+  const timelineVisits = [
+    currentVisit,
+    ...historicalVisits.filter((visit) => visit.consultationId !== patient.id),
+  ].sort((left, right) => {
+    const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+    const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+    return rightTime - leftTime;
+  });
+  const timelineDocuments = patient.documents.filter(
+    (document) => !document.consultationId || !timelineVisits.some((visit) => visit.documents?.some((item) => item.id === document.id))
+  );
 
   const handleOpenDoc = (doc: DocumentFile) => {
     setSelectedDocForViewer(doc);
@@ -124,19 +113,6 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
               <Clock className="w-4 h-4" />
             </button>
 
-            <button
-              onClick={() => {
-                setActiveDrawerTab('Transcript');
-                onToggle();
-              }}
-              className="p-2 rounded-lg hover:text-[#064e4b] hover:bg-slate-100 transition-colors cursor-pointer relative"
-              title="Triage Dialogue Transcript"
-            >
-              <MessageSquareQuote className="w-4 h-4" />
-              {patient.transcripts.length > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 bg-teal-500 rounded-full" />
-              )}
-            </button>
           </div>
         </aside>
 
@@ -166,7 +142,6 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
             {[
               { id: 'Docs', label: 'Docs', icon: FileText, count: patient.documents.length },
               { id: 'Timeline', label: 'Timeline', icon: Clock },
-              { id: 'Transcript', label: 'Transcript', icon: MessageSquareQuote },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeDrawerTab === tab.id;
@@ -357,39 +332,46 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
               </span>
 
               <div className="relative pl-4 border-l-2 border-slate-200 space-y-5">
-                {/* Current and prior consultations */}
-                {patient.pastVisits && patient.pastVisits.length > 0 ? patient.pastVisits.map((visit, idx) => (
+                {timelineVisits.map((visit, idx) => (
                   <div key={`timeline-visit-${visit.consultationId}-${idx}`} className="relative">
-                    <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-white ${idx === 0 ? 'bg-[#064e4b]' : 'bg-slate-300'}`} />
+                    <div className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-white ${visit.consultationId === patient.id ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                     <div className="text-[10px] font-bold text-slate-400">
-                      {visit.createdAt ? new Date(visit.createdAt).toLocaleDateString().toUpperCase() : 'VISIT'}
+                      {visit.createdAt && !Number.isNaN(new Date(visit.createdAt).getTime()) ? new Date(visit.createdAt).toLocaleDateString().toUpperCase() : 'VISIT'}
                     </div>
                     <div className="text-xs font-bold text-slate-900 mt-0.5">
-                      {visit.department || 'AyushCare OPD'} · {visit.tokenNumber || 'Consultation'}
+                      {visit.consultationId === patient.id ? 'Current Visit · ' : ''}{visit.department || 'AyushCare OPD'} · {visit.tokenNumber || 'Consultation'}
                     </div>
                     {visit.doctorName && <div className="text-[10px] text-slate-500 mt-0.5">Attending: {visit.doctorName}</div>}
                     <p className="text-[11px] text-slate-600 mt-1">
-                      {visit.diagnosis ? `Diagnosis: ${visit.diagnosis}` : visit.chiefComplaint || visit.remarks || 'Consultation recorded.'}
+                      {visit.diagnosis ? `Diagnosis: ${visit.diagnosis}` : visit.chiefComplaint ? `Chief complaint: ${visit.chiefComplaint}` : visit.remarks || 'Consultation recorded.'}
                     </p>
+                    {(visit.diagnosisCode || visit.diagnosisCodes?.length) && (
+                      <p className="text-[10px] text-slate-500 mt-1">ICD: {[visit.diagnosisCode, ...(visit.diagnosisCodes || [])].filter(Boolean).join(', ')}</p>
+                    )}
+                    {visit.historyOfPresentIllness && <p className="text-[10px] text-slate-500 mt-1">Notes: {visit.historyOfPresentIllness}</p>}
                     {visit.prescriptions && visit.prescriptions.length > 0 && (
-                      <p className="text-[10px] text-teal-700 mt-1 font-medium">
+                      <div className="text-[10px] text-teal-700 mt-1 font-medium">
                         Prescription: {visit.prescriptions.map((rx) => rx.drugName).join(', ')}
-                      </p>
+                      </div>
+                    )}
+                    {visit.documents && visit.documents.length > 0 && (
+                      <div className="text-[10px] text-slate-500 mt-1">
+                        <span>Reports: </span>
+                        {visit.documents.map((document, documentIndex) => (
+                          <React.Fragment key={`timeline-report-${document.id || documentIndex}`}>
+                            {documentIndex > 0 && ', '}
+                            <button type="button" onClick={() => handleOpenDoc(document)} className="text-teal-700 hover:underline cursor-pointer">
+                              {document.name}
+                            </button>
+                          </React.Fragment>
+                        ))}
+                      </div>
                     )}
                   </div>
-                )) : <div className="relative">
-                  <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-[#064e4b] ring-4 ring-white" />
-                  <div className="text-[10px] font-bold text-slate-400">
-                    {patient.createdAt ? new Date(patient.createdAt).toLocaleDateString().toUpperCase() : 'CURRENT VISIT'}
-                  </div>
-                  <div className="text-xs font-bold text-slate-900 mt-0.5">AyushCare OPD Intake & Triage</div>
-                  <p className="text-[11px] text-slate-600 mt-1">
-                    {patient.chiefComplaint || 'Chief complaint recorded. Triage transcript logged.'}
-                  </p>
-                </div>}
+                ))}
 
                 {/* Event 2: Documents uploaded if any */}
-                {patient.documents.map((doc, idx) => (
+                {timelineDocuments.map((doc, idx) => (
                   <div key={`timeline-doc-${doc.id || idx}-${idx}`} className="relative">
                     <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-slate-300 ring-4 ring-white" />
                     <div className="text-[10px] font-bold text-slate-400">{doc.date}</div>
@@ -411,86 +393,6 @@ export const EvidenceDrawer: React.FC<EvidenceDrawerProps> = ({
             </div>
           )}
 
-          {/* TAB 3: TRANSCRIPT */}
-          {activeDrawerTab === 'Transcript' && (
-            <div className="space-y-3">
-              {/* Header notice */}
-              <div className="p-2.5 bg-[#f8fafc] border border-slate-200 rounded-lg text-xs text-slate-600">
-                <p className="font-semibold text-slate-800">Source Triage Transcript</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Kiosk conversational dialogue for physician review.
-                </p>
-              </div>
-
-              {patient.transcripts.length === 0 ? (
-                <div className="p-6 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-400">
-                  No voice dialogue transcripts recorded for this token.
-                </div>
-              ) : (
-                /* Chat Conversation Thread */
-                <div className="space-y-3">
-                  {patient.transcripts.map((item, idx) => {
-                    const isBot = item.speaker === 'bot';
-                    const isPlaying = playingAudioId === item.id;
-
-                    return (
-                      <div
-                        key={`transcript-${item.id || idx}-${idx}`}
-                        className={`flex items-start gap-2.5 ${isBot ? '' : 'flex-row-reverse'}`}
-                      >
-                        {/* Speaker Icon */}
-                        <div
-                          className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
-                            isBot ? 'bg-[#064e4b] text-white' : 'bg-slate-700 text-white'
-                          }`}
-                        >
-                          {isBot ? <Bot className="w-4 h-4 text-teal-200" /> : <User className="w-4 h-4 text-slate-200" />}
-                        </div>
-
-                        {/* Chat Bubble */}
-                        <div
-                          className={`max-w-[82%] p-3 rounded-xl text-xs space-y-1.5 shadow-2xs ${
-                            isBot
-                              ? 'bg-[#f8fafc] text-slate-800 rounded-tl-none border border-slate-200/80'
-                              : 'bg-[#064e4b] text-white rounded-tr-none'
-                          }`}
-                        >
-                          <p className="leading-relaxed">{item.text}</p>
-
-                          {/* Interactive Audio Button */}
-                          {!isBot && (
-                            <div className="pt-1 flex items-center justify-between border-t border-teal-800/80 mt-1">
-                              <button
-                                type="button"
-                                onClick={() => toggleAudio(item.id, item.audioUrl)}
-                                className={`inline-flex items-center space-x-1.5 px-2 py-1 rounded text-[11px] font-semibold transition-all cursor-pointer ${
-                                  isPlaying
-                                    ? 'bg-amber-400 text-slate-900 animate-pulse'
-                                    : 'bg-teal-900 hover:bg-teal-800 text-teal-100'
-                                }`}
-                              >
-                                {isPlaying ? (
-                                  <>
-                                    <Pause className="w-3 h-3 text-slate-900" />
-                                    <span>Playing... {item.audioDuration ? `(${item.audioDuration})` : ''}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Volume2 className="w-3 h-3 text-teal-200" />
-                                    <span>Play audio</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </aside>
 

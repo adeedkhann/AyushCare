@@ -173,6 +173,10 @@ export function mapQueueItemToPatient(
   }
 
   // Extract Chief Complaint
+  const rawClinicalSummary = safeParseJson((summary as any)?.clinical_summary);
+  const rawHpiNarrative = safeParseJson((summary as any)?.hpi_narrative);
+  const rawAiDraft = safeParseJson((summary as any)?.ai_draft) || {};
+  const rawSocratesAssessment = safeParseJson((summary as any)?.socrates_assessment) || {};
   const chiefComplaint =
     summary?.chief_complaint ||
     aiPayload?.chief_complaint ||
@@ -182,14 +186,20 @@ export function mapQueueItemToPatient(
 
   // Extract History of Present Illness (HPI)
   const historyOfPresentIllness =
+    (typeof rawClinicalSummary === 'string' && rawClinicalSummary) ||
+    (typeof rawHpiNarrative === 'string' && rawHpiNarrative) ||
     summary?.history_of_present_illness ||
     aiPayload?.history_of_present_illness ||
     aiPayload?.hpi ||
+    rawAiDraft?.summary ||
     parsedSummarySections.find((s) => /history|present illness|hpi/i.test(s.heading))?.body ||
     '';
 
   // Narrative Summary
   const narrativeSummary =
+    (typeof rawClinicalSummary === 'string' && rawClinicalSummary) ||
+    (typeof rawHpiNarrative === 'string' && rawHpiNarrative) ||
+    rawAiDraft?.summary ||
     aiPayload?.summary_text ||
     aiPayload?.narrative_summary ||
     aiPayload?.summary ||
@@ -205,6 +215,8 @@ export function mapQueueItemToPatient(
 
   // Extract SOCRATES from any available AI summary structure
   const rawSocrates =
+    rawSocratesAssessment?.fields ||
+    rawSocratesAssessment ||
     summary?.socrates ||
     aiPayload?.socrates ||
     ayushAttrs?.socrates ||
@@ -215,10 +227,7 @@ export function mapQueueItemToPatient(
     onset: formatSocratesField(rawSocrates.onset, rawSocrates.onset_confidence),
     character: formatSocratesField(rawSocrates.character, rawSocrates.character_confidence),
     radiation: formatSocratesField(rawSocrates.radiation, rawSocrates.radiation_confidence),
-    associated: formatSocratesField(
-      rawSocrates.associated || historyOfPresentIllness,
-      rawSocrates.associated_confidence
-    ),
+    associated: formatSocratesField(rawSocrates.associated, rawSocrates.associated_confidence),
     timing: formatSocratesField(rawSocrates.timing, rawSocrates.timing_confidence),
     aggravating: formatSocratesField(
       rawSocrates.aggravating || rawSocrates.exacerbating,
@@ -493,24 +502,60 @@ export function mapQueueItemToPatient(
       (summary as any)?.intakeMode ||
       (item as any)?.intake_mode ||
       'interview',
-    pastVisits: (history?.visits || []).map((visit: any) => ({
-      consultationId: visit.consultation_id,
-      tokenNumber: visit.token_number,
-      status: visit.status,
-      riskLevel: visit.risk_level,
-      createdAt: visit.created_at,
-      signedOffAt: visit.signed_off_at,
-      department: visit.department,
-      pathway: visit.pathway,
-      doctorName: visit.doctor_name,
-      chiefComplaint: visit.chief_complaint,
-      diagnosis: visit.diagnosis,
-      historyOfPresentIllness: visit.history_of_present_illness,
-      remarks: visit.remarks,
-      prescriptions: parsePrescriptionItems(visit.prescriptions, visit.consultation_id),
-    })),
+    pastVisits: normalizePastVisits(history, item.id, mappedDocuments),
   };
 }
+
+const normalizePastVisits = (history: PatientHistoryResponse | null | undefined, currentConsultationId: string, documents: DocumentFile[]) => {
+  const historyRecord = history as (PatientHistoryResponse & Record<string, any>) | null | undefined;
+  const rawVisits = [
+    historyRecord?.visits,
+    historyRecord?.past_consultations,
+    historyRecord?.previous_visits,
+    historyRecord?.history,
+    historyRecord?.patientHistoryData?.visits,
+    historyRecord?.patientHistoryData?.past_consultations,
+    historyRecord?.patientHistoryData?.previous_visits,
+  ].find(Array.isArray) || [];
+
+  return rawVisits
+    .map((visit: any) => {
+      const consultationId = String(
+        visit?.consultation_id || visit?.consultationId || visit?.id || ''
+      );
+      const visitDocuments = documents.filter((document) => document.consultationId === consultationId);
+      const rawDiagnosisCodes = visit?.diagnosis_codes || visit?.diagnosisCodes || visit?.icd_codes || visit?.icdCodes;
+      const diagnosisCodes = Array.isArray(rawDiagnosisCodes)
+        ? rawDiagnosisCodes.map(String).filter(Boolean)
+        : rawDiagnosisCodes
+          ? [String(rawDiagnosisCodes)]
+          : [];
+
+      return {
+        consultationId,
+        tokenNumber: visit?.token_number || visit?.tokenNumber,
+        status: visit?.status,
+        riskLevel: visit?.risk_level || visit?.riskLevel,
+        createdAt: visit?.created_at || visit?.createdAt || visit?.date || visit?.visit_date,
+        signedOffAt: visit?.signed_off_at || visit?.signedOffAt,
+        department: visit?.department || visit?.department_name || visit?.departmentName,
+        pathway: visit?.pathway || visit?.department_pathway || visit?.departmentPathway,
+        doctorName: visit?.doctor_name || visit?.doctorName || visit?.attending_doctor,
+        chiefComplaint: visit?.chief_complaint || visit?.chiefComplaint || visit?.complaint,
+        diagnosis: visit?.diagnosis || visit?.primary_diagnosis || visit?.primaryDiagnosis,
+        diagnosisCode: visit?.diagnosis_code || visit?.diagnosisCode || visit?.icd_code || visit?.icdCode,
+        diagnosisCodes,
+        historyOfPresentIllness: visit?.history_of_present_illness || visit?.historyOfPresentIllness,
+        remarks: visit?.remarks || visit?.notes || visit?.doctor_notes,
+        prescriptions: parsePrescriptionItems(
+          visit?.prescriptions || visit?.medications || visit?.medicines,
+          consultationId || currentConsultationId
+        ),
+        documents: visitDocuments,
+      };
+    })
+    .filter((visit) => visit.consultationId);
+};
 
 const parsePrescriptionItems = (raw: any, consultationId: string): PrescriptionItem[] => {
   const parsed = safeParseJson(raw);

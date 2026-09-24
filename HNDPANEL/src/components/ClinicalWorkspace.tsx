@@ -42,7 +42,7 @@ import {
 
 interface ClinicalWorkspaceProps {
   patient: Patient;
-  onUpdatePatient: (updated: Patient) => void;
+  onUpdatePatient: (updated: Patient) => void | Promise<void>;
   onConfirmContinue: () => void;
   onToggleEvidence?: () => void;
   isEvidenceOpen?: boolean;
@@ -96,10 +96,9 @@ const SOCRATES_CONFIG = [
   { key: 'onset', label: 'ONSET' },
   { key: 'character', label: 'CHARACTER' },
   { key: 'radiation', label: 'RADIATION' },
-  { key: 'associated', label: 'ASSOCIATED' },
+  { key: 'associated', label: 'ASSOCIATED SYMPTOMS' },
   { key: 'timing', label: 'TIMING' },
-  { key: 'aggravating', label: 'AGGRAVATING' },
-  { key: 'relieving', label: 'RELIEVING' },
+  { key: 'aggravating', label: 'EXACERBATING / RELIEVING' },
   { key: 'severity', label: 'SEVERITY' },
 ] as const;
 
@@ -174,6 +173,165 @@ const getAiSuggestedMeds = (patient: Patient) => {
   return suggestions;
 };
 
+type SocratesKey = keyof Patient['socrates'];
+
+interface AiClinicalSummaryCardProps {
+  narrative: string;
+  isEditing: boolean;
+  isListening: boolean;
+  editedHpi: string;
+  onEditToggle: () => void;
+  onNarrativeChange: (value: string) => void;
+  onDictate: () => void;
+}
+
+export const AiClinicalSummaryCard: React.FC<AiClinicalSummaryCardProps> = ({
+  narrative,
+  isEditing,
+  isListening,
+  editedHpi,
+  onEditToggle,
+  onNarrativeChange,
+  onDictate,
+}) => (
+  <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
+    <div className="flex items-center justify-between">
+      <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+        <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+        <span>AI Clinical Summary & History of Present Illness (HPI)</span>
+      </h3>
+      <div className="flex items-center space-x-2">
+        <button
+          type="button"
+          onClick={onDictate}
+          className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+            isListening
+              ? 'bg-rose-500 text-white animate-pulse shadow-xs'
+              : 'bg-teal-50 hover:bg-teal-100 text-[#054444] border border-teal-200'
+          }`}
+          title={isListening ? 'Stop voice dictation' : 'Dictate clinical memo via speech-to-text'}
+        >
+          {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+          <span>{isListening ? 'Listening...' : 'Dictate'}</span>
+        </button>
+        <button onClick={onEditToggle} className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer">
+          {isEditing ? 'Cancel' : 'Edit'}
+        </button>
+      </div>
+    </div>
+
+    {isEditing ? (
+      <div className="space-y-1.5">
+        <textarea
+          rows={6}
+          value={editedHpi}
+          onChange={(event) => onNarrativeChange(event.target.value)}
+          placeholder="Enter detailed history of present illness or speak using Dictate button..."
+          className="w-full text-xs font-medium text-slate-800 p-3 bg-[#f8fafc] border border-slate-300 rounded-lg focus:ring-1 focus:ring-[#064e4b] leading-relaxed"
+        />
+        {isListening && (
+          <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping inline-block" />
+            Speech transcription active. Speaking into microphone will append clinical notes.
+          </p>
+        )}
+      </div>
+    ) : hasValue(narrative) ? (
+      <div className="p-3.5 bg-[#f8fafc] rounded-xl border border-slate-200/90 shadow-2xs">
+        <MarkdownContent content={narrative} />
+      </div>
+    ) : (
+      <div className="py-2.5 px-3.5 bg-slate-50 border border-slate-200/80 rounded-lg flex items-center justify-between text-xs text-slate-500">
+        <span className="font-medium">No extended clinical narrative recorded for this consultation.</span>
+        <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
+          Summary Unavailable
+        </span>
+      </div>
+    )}
+  </div>
+);
+
+interface SocratesAssessmentCardProps {
+  assessment: Patient['socrates'];
+  isEditing: boolean;
+  onEditToggle: () => void;
+  onFieldChange: (key: SocratesKey, value: string) => void;
+  renderConfidenceDot: (confidence: 'High' | 'Verify' | 'Critical') => React.ReactNode;
+}
+
+export const SocratesAssessmentCard: React.FC<SocratesAssessmentCardProps> = ({
+  assessment,
+  isEditing,
+  onEditToggle,
+  onFieldChange,
+  renderConfidenceDot,
+}) => {
+  const getFieldValue = (key: SocratesKey) => {
+    if (key === 'aggravating') {
+      return [assessment?.aggravating?.value, assessment?.relieving?.value].filter((value) => hasValue(value)).join(' / ');
+    }
+    return assessment?.[key]?.value || '';
+  };
+  const validFields = SOCRATES_CONFIG.filter(({ key }) => hasValue(getFieldValue(key)));
+
+  return (
+    <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md bg-teal-100 text-[#064e4b] flex items-center justify-center font-bold text-[11px]">S</div>
+          <div>
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+              History of Present Illness • SOCRATES Assessment
+            </h3>
+            <p className="text-[11px] text-slate-400">Structured symptom assessment from the AI clinical intake.</p>
+          </div>
+        </div>
+        <button onClick={onEditToggle} className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer">
+          {isEditing ? 'Cancel' : 'Edit'}
+        </button>
+      </div>
+
+      {isEditing ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {SOCRATES_CONFIG.map(({ key, label }) => (
+            <label key={`soc-edit-${key}`} className="p-3 bg-[#f8fafc] rounded-xl border border-slate-200/80">
+              <span className="text-[10px] font-bold text-slate-500 block tracking-wider uppercase mb-1">{label}</span>
+              {key === 'aggravating' ? (
+                <div className="space-y-1.5">
+                  <input type="text" value={assessment.aggravating?.value || ''} onChange={(event) => onFieldChange('aggravating', event.target.value)} placeholder="Exacerbating" className="text-xs font-semibold text-slate-900 bg-white border border-slate-300 px-2 py-1 rounded-lg w-full focus:ring-1 focus:ring-teal-700" />
+                  <input type="text" value={assessment.relieving?.value || ''} onChange={(event) => onFieldChange('relieving', event.target.value)} placeholder="Relieving" className="text-xs font-semibold text-slate-900 bg-white border border-slate-300 px-2 py-1 rounded-lg w-full focus:ring-1 focus:ring-teal-700" />
+                </div>
+              ) : (
+                <input type="text" value={assessment[key]?.value || ''} onChange={(event) => onFieldChange(key, event.target.value)} className="text-xs font-semibold text-slate-900 bg-white border border-slate-300 px-2 py-1 rounded-lg w-full focus:ring-1 focus:ring-teal-700" />
+              )}
+            </label>
+          ))}
+        </div>
+      ) : validFields.length === 0 ? (
+        <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-slate-500 text-xs text-center font-medium">
+          No detailed SOCRATES symptoms logged for this consultation.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {validFields.map(({ key, label }) => (
+            <div key={`soc-view-${key}`} className="p-3.5 bg-[#f8fafc] rounded-xl border border-slate-200/90 flex items-start justify-between gap-2 shadow-2xs">
+              <div className="flex-1 min-w-0">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[10px] uppercase tracking-wider bg-teal-50 text-teal-900 border border-teal-200/80 shadow-2xs">
+                  {label}
+                </span>
+                <div className="text-xs font-medium text-slate-800 leading-relaxed mt-1.5">
+                  <BilingualBlock text={getFieldValue(key)} />
+                </div>
+              </div>
+              <div className="shrink-0 pt-0.5">{renderConfidenceDot(assessment[key].confidence)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
   patient,
   onUpdatePatient,
@@ -196,6 +354,20 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
   const [editedChiefComplaint, setEditedChiefComplaint] = useState(patient.chiefComplaint);
   const [editedHpi, setEditedHpi] = useState(patient.historyOfPresentIllness || patient.narrativeSummary || '');
   const [editedSocrates, setEditedSocrates] = useState(patient.socrates);
+
+  const startEditing = () => {
+    setEditedChiefComplaint(patient.chiefComplaint || '');
+    setEditedHpi(patient.historyOfPresentIllness || patient.narrativeSummary || '');
+    setEditedSocrates(patient.socrates);
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setEditedChiefComplaint(patient.chiefComplaint || '');
+    setEditedHpi(patient.historyOfPresentIllness || patient.narrativeSummary || '');
+    setEditedSocrates(patient.socrates);
+    setIsEditing(false);
+  };
 
   // Quick Rx Builder State
   const [rxQuery, setRxQuery] = useState('');
@@ -286,17 +458,15 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
 
   // Sync state if active patient changes
   useEffect(() => {
+    if (isEditing) return;
     setEditedChiefComplaint(patient.chiefComplaint);
     setEditedHpi(patient.historyOfPresentIllness || patient.narrativeSummary || '');
     setEditedSocrates(patient.socrates);
-    setIsEditing(false);
-    setIsPriorityAlertDismissed(false);
-    setIsAiDraftDismissed(false);
     if (isListening && recognitionRef.current) {
       recognitionRef.current.stop();
       setIsListening(false);
     }
-  }, [patient.id]);
+  }, [patient.id, patient.chiefComplaint, patient.historyOfPresentIllness, patient.narrativeSummary, patient.socrates, isEditing]);
 
   // Voice Dictation Toggle Handler
   const toggleVoiceDictation = () => {
@@ -357,7 +527,7 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
     }
   };
 
-  const handleSaveSummary = () => {
+  const handleSaveSummary = async () => {
     const updatedPatient: Patient = {
       ...patient,
       chiefComplaint: editedChiefComplaint,
@@ -365,10 +535,14 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
       narrativeSummary: editedHpi,
       socrates: editedSocrates,
     };
-    onUpdatePatient(updatedPatient);
-    setIsEditing(false);
-    setSaveToast(true);
-    setTimeout(() => setSaveToast(false), 3000);
+    try {
+      await onUpdatePatient(updatedPatient);
+      setIsEditing(false);
+      setSaveToast(true);
+      setTimeout(() => setSaveToast(false), 3000);
+    } catch {
+      setSaveToast(false);
+    }
   };
 
   const updateSocratesField = (key: keyof Patient['socrates'], val: string) => {
@@ -455,11 +629,6 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
   const hasSpo2 = vitals?.spo2 !== undefined && vitals?.spo2 !== null && vitals?.spo2 !== 0;
   const hasTemp = vitals?.temperature !== undefined && vitals?.temperature !== null && vitals?.temperature !== 0;
   const hasAnyValidVitals = Boolean(hasSystolic || hasPulse || hasSpo2 || hasTemp);
-
-  // Filtered SOCRATES list for dynamic display
-  const validSocratesList = SOCRATES_CONFIG.filter(({ key }) =>
-    hasValue(patient.socrates?.[key]?.value)
-  );
 
   const aiSuggestedMeds = getAiSuggestedMeds(patient);
 
@@ -794,7 +963,7 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
                   </button>
                 ) : (
                   <button
-                    onClick={() => setIsEditing(true)}
+                    onClick={startEditing}
                     className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer"
                   >
                     Edit All
@@ -897,7 +1066,7 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
                 Chief Complaint
               </span>
               <button
-                onClick={() => setIsEditing(!isEditing)}
+                onClick={isEditing ? cancelEditing : startEditing}
                 className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer"
               >
                 {isEditing ? 'Cancel' : 'Edit'}
@@ -927,76 +1096,15 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* AI Clinical Summary & History of Present Illness (HPI) Card with Bilingual Markdown Support */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-2.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-teal-700" />
-                <span>AI Clinical Summary & History of Present Illness (HPI)</span>
-              </h3>
-              <div className="flex items-center space-x-2">
-                {/* Voice Dictation Button */}
-                <button
-                  type="button"
-                  onClick={toggleVoiceDictation}
-                  className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                    isListening
-                      ? 'bg-rose-500 text-white animate-pulse shadow-xs'
-                      : 'bg-teal-50 hover:bg-teal-100 text-[#054444] border border-teal-200'
-                  }`}
-                  title={isListening ? 'Stop voice dictation' : 'Dictate clinical memo via speech-to-text'}
-                >
-                  {isListening ? (
-                    <>
-                      <MicOff className="w-3.5 h-3.5" />
-                      <span>Listening...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Mic className="w-3.5 h-3.5" />
-                      <span>Dictate</span>
-                    </>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer"
-                >
-                  {isEditing ? 'Cancel' : 'Edit'}
-                </button>
-              </div>
-            </div>
-
-            {isEditing ? (
-              <div className="space-y-1.5">
-                <textarea
-                  rows={6}
-                  value={editedHpi}
-                  onChange={(e) => setEditedHpi(e.target.value)}
-                  placeholder="Enter detailed history of present illness or speak using Dictate button..."
-                  className="w-full text-xs font-medium text-slate-800 p-3 bg-[#f8fafc] border border-slate-300 rounded-lg focus:ring-1 focus:ring-[#064e4b] leading-relaxed"
-                />
-                {isListening && (
-                  <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping inline-block" />
-                    Speech transcription active. Speaking into microphone will append clinical notes.
-                  </p>
-                )}
-              </div>
-            ) : hasValue(editedHpi) ? (
-              <div className="p-3.5 bg-[#f8fafc] rounded-xl border border-slate-200/90 shadow-2xs">
-                <MarkdownContent content={editedHpi} />
-              </div>
-            ) : (
-              <div className="py-2.5 px-3.5 bg-slate-50 border border-slate-200/80 rounded-lg flex items-center justify-between text-xs text-slate-500">
-                <span className="font-medium">No extended clinical narrative recorded for this consultation.</span>
-                <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
-                  Summary Unavailable
-                </span>
-              </div>
-            )}
-          </div>
+          <AiClinicalSummaryCard
+            narrative={patient.historyOfPresentIllness || patient.narrativeSummary || ''}
+            isEditing={isEditing}
+            isListening={isListening}
+            editedHpi={editedHpi}
+            onEditToggle={isEditing ? cancelEditing : startEditing}
+            onNarrativeChange={setEditedHpi}
+            onDictate={toggleVoiceDictation}
+          />
 
           {/* PRESCRIPTION BUILDER DESK */}
           <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
@@ -1256,81 +1364,13 @@ export const ClinicalWorkspace: React.FC<ClinicalWorkspaceProps> = ({
             </div>
           )}
 
-          {/* History of Present Illness · SOCRATES Framework Grid with Full Markdown Support */}
-          <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-md bg-teal-100 text-[#064e4b] flex items-center justify-center font-bold text-[11px]">
-                  S
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    History of Present Illness • SOCRATES Assessment
-                  </h3>
-                  <p className="text-[11px] text-slate-400">
-                    Systematic symptom evaluation structured via AI clinical intake dialogue.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsEditing(!isEditing)}
-                className="text-[#064e4b] hover:underline font-semibold text-xs cursor-pointer"
-              >
-                {isEditing ? 'Cancel' : 'Edit'}
-              </button>
-            </div>
-
-            {isEditing ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {SOCRATES_CONFIG.map(({ key, label }) => (
-                  <div
-                    key={`soc-edit-${key}`}
-                    className="p-3 bg-[#f8fafc] rounded-xl border border-slate-200/80 flex items-center justify-between"
-                  >
-                    <div className="flex-1 mr-2">
-                      <span className="text-[10px] font-bold text-slate-500 block tracking-wider uppercase mb-1">
-                        {label}
-                      </span>
-                      <input
-                        type="text"
-                        value={editedSocrates[key]?.value || ''}
-                        onChange={(e) => updateSocratesField(key, e.target.value)}
-                        className="text-xs font-semibold text-slate-900 bg-white border border-slate-300 px-2 py-1 rounded-lg w-full focus:ring-1 focus:ring-teal-700"
-                      />
-                    </div>
-                    <div>{renderConfidenceDot(editedSocrates[key]?.confidence || 'Verify')}</div>
-                  </div>
-                ))}
-              </div>
-            ) : validSocratesList.length === 0 ? (
-              <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-slate-500 text-xs text-center font-medium">
-                No detailed SOCRATES symptoms logged for this consultation.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {validSocratesList.map(({ key, label }) => (
-                  <div
-                    key={`soc-view-${key}`}
-                    className="p-3.5 bg-[#f8fafc] rounded-xl border border-slate-200/90 flex items-start justify-between gap-2 shadow-2xs hover:bg-slate-50/80 transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[10px] uppercase tracking-wider bg-teal-50 text-teal-900 border border-teal-200/80 shadow-2xs">
-                          {label}
-                        </span>
-                      </div>
-                      <div className="text-xs font-medium text-slate-800 leading-relaxed">
-                        <BilingualBlock text={patient.socrates[key].value} />
-                      </div>
-                    </div>
-                    <div className="shrink-0 pt-0.5">
-                      {renderConfidenceDot(patient.socrates[key].confidence)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <SocratesAssessmentCard
+            assessment={isEditing ? editedSocrates : patient.socrates}
+            isEditing={isEditing}
+            onEditToggle={isEditing ? cancelEditing : startEditing}
+            onFieldChange={updateSocratesField}
+            renderConfidenceDot={renderConfidenceDot}
+          />
         </div>
       )}
 
